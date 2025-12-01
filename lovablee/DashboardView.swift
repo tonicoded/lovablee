@@ -26,6 +26,7 @@ struct DashboardView: View {
     var onPetAlert: ((String, String) -> Void)? = nil
     var onRenamePet: ((String) async throws -> Void)? = nil
     var onSendLoveNote: ((String) async throws -> Void)? = nil
+    var loadLoveNotes: (() async throws -> [LoveNote])? = nil
     var userEmail: String?
     var onRefreshPairing: (() -> Void)? = nil
     @State private var activeTab: DashboardNavTab = .home
@@ -45,7 +46,9 @@ struct DashboardView: View {
     @State private var streakTimer: Timer?
     @State private var statusRefreshTimer: AnyCancellable?
     @State private var activityItems: [SupabaseActivityItem] = []
+    @State private var loveNotes: [LoveNote] = []
     @State private var isActivityLoading = false
+    @State private var isLoveNotesLoading = false
     @State private var activityRefreshTimer: AnyCancellable?
     @State private var showSettings = false
 
@@ -166,13 +169,18 @@ struct DashboardView: View {
                                      isLightsOut: isLightsOut,
                                      safeAreaInsets: stableInsets,
                                      items: activityItems,
+                                     loveNotes: loveNotes,
                                      isLoading: isActivityLoading,
+                                     isLoveNotesLoading: isLoveNotesLoading,
                                      userId: userIdentifier,
                                      userName: name,
                                      partnerName: partnerName,
                                      userPhotoURL: profileImageURL,
                                      partnerPhotoURL: partnerProfileImageURL,
-                                     onRefresh: { refreshActivity(force: true) })
+                                     onRefresh: {
+                                         refreshActivity(force: true)
+                                         refreshLoveNotes(force: true)
+                                     })
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
 
@@ -304,6 +312,7 @@ struct DashboardView: View {
         .onChange(of: activeTab) { _, newValue in
             if newValue == .activity {
                 refreshActivity(force: activityItems.isEmpty)
+                refreshLoveNotes(force: loveNotes.isEmpty)
             }
         }
     }
@@ -370,6 +379,25 @@ struct DashboardView: View {
                     if self.activeTab == .activity {
                         self.onPetAlert?("Couldn't load activity", "Please try again in a moment.")
                     }
+                }
+            }
+        }
+    }
+
+    private func refreshLoveNotes(force: Bool = false) {
+        guard let loader = loadLoveNotes else { return }
+        if isLoveNotesLoading && !force { return }
+        isLoveNotesLoading = true
+        Task {
+            do {
+                let notes = try await loader()
+                await MainActor.run {
+                    self.loveNotes = notes
+                    self.isLoveNotesLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoveNotesLoading = false
                 }
             }
         }
@@ -1359,7 +1387,9 @@ private struct ActivityFeedView: View {
     let isLightsOut: Bool
     let safeAreaInsets: EdgeInsets
     let items: [SupabaseActivityItem]
+    let loveNotes: [LoveNote]
     let isLoading: Bool
+    let isLoveNotesLoading: Bool
     let userId: String?
     let userName: String
     let partnerName: String?
@@ -1421,6 +1451,42 @@ private struct ActivityFeedView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 12) {
+                            // Love Notes Section
+                            if !loveNotes.isEmpty {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    HStack {
+                                        Image(systemName: "heart.text.square.fill")
+                                            .font(.system(size: 16, weight: .semibold))
+                                        Text("Love Notes")
+                                            .font(.system(size: 18, weight: .bold))
+                                    }
+                                    .foregroundColor(theme.textPrimary)
+                                    .padding(.horizontal, 4)
+                                    .padding(.top, 8)
+
+                                    ForEach(loveNotes.prefix(5)) { note in
+                                        LoveNoteCard(note: note,
+                                                     theme: theme,
+                                                     isLightsOut: isLightsOut,
+                                                     currentUserId: userId ?? "")
+                                    }
+                                }
+                                .padding(.bottom, 16)
+                            }
+
+                            // Activity Items Section
+                            if !items.isEmpty {
+                                HStack {
+                                    Image(systemName: "clock.fill")
+                                        .font(.system(size: 16, weight: .semibold))
+                                    Text("Recent Activity")
+                                        .font(.system(size: 18, weight: .bold))
+                                }
+                                .foregroundColor(theme.textPrimary)
+                                .padding(.horizontal, 4)
+                                .padding(.top, 4)
+                            }
+
                             ForEach(items) { item in
                                 ActivityRow(item: item,
                                             theme: theme,
@@ -3031,6 +3097,63 @@ private struct PetGaugeCard: View {
             .frame(height: 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Love Note Card
+private struct LoveNoteCard: View {
+    let note: LoveNote
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let currentUserId: String
+
+    private var isFromMe: Bool {
+        note.senderId == currentUserId
+    }
+
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: note.createdAt, relativeTo: Date())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: isFromMe ? "paperplane.fill" : "heart.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isFromMe ? .blue.opacity(0.8) : .pink.opacity(0.8))
+
+                Text(isFromMe ? "You" : note.senderName)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(theme.textPrimary)
+
+                Spacer()
+
+                Text(relativeTime)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(theme.textMuted.opacity(0.7))
+            }
+
+            Text(note.message)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(theme.textPrimary.opacity(0.9))
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isFromMe
+                      ? Color.blue.opacity(isLightsOut ? 0.15 : 0.1)
+                      : Color.pink.opacity(isLightsOut ? 0.15 : 0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(isFromMe
+                             ? Color.blue.opacity(0.3)
+                             : Color.pink.opacity(0.3), lineWidth: 1)
+        )
     }
 }
 

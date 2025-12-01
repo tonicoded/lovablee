@@ -120,6 +120,9 @@ struct ContentView: View {
                               onSendLoveNote: { message in
                                   _ = try await sendLoveNote(message: message)
                               },
+                              loadLoveNotes: {
+                                  try await loadLoveNotesFromServer()
+                              },
                               userEmail: userRecord?.email,
                               onRefreshPairing: { ensureLatestUserRecordIfMissing(force: true) })
                 .onAppear {
@@ -363,6 +366,12 @@ struct ContentView: View {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.fetchCoupleActivity(session: session,
                                                                      limit: 50)
+        }
+    }
+
+    private func loadLoveNotesFromServer() async throws -> [LoveNote] {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.getLoveNotes(session: session, limit: 50)
         }
     }
 
@@ -2829,120 +2838,126 @@ struct LoveNoteSheet: View {
             // Background
             backgroundGradient(isDark: isLightsOut)
                 .ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                // Header
-                HStack {
-                    Button(action: { dismiss() }) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(theme.textPrimary.opacity(0.7))
-                            .frame(width: 44, height: 44)
-                    }
-
-                    Spacer()
-
-                    Button(action: {}) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(theme.textPrimary.opacity(0.3))
-                            .frame(width: 44, height: 44)
-                    }
-                    .disabled(true)
+                .onTapGesture {
+                    isMessageFocused = false
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
 
-                // Title
-                Text("Write a note")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(theme.textPrimary)
-                    .padding(.top, 20)
-
-                // Heart icon
-                Image(systemName: "heart.fill")
-                    .font(.system(size: 50))
-                    .foregroundStyle(.pink.opacity(0.8))
-                    .padding(.top, 30)
-                    .padding(.bottom, 30)
-
-                // From/To info
-                VStack(alignment: .leading, spacing: 8) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Header
                     HStack {
-                        Text("From: \(userName)")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(theme.textPrimary.opacity(0.8))
+                        Button(action: { dismiss() }) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(theme.textPrimary.opacity(0.7))
+                                .frame(width: 44, height: 44)
+                        }
 
                         Spacer()
 
-                        Text(todayString)
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundStyle(theme.textMuted)
+                        Button(action: {
+                            isMessageFocused = false
+                        }) {
+                            Image(systemName: "keyboard.chevron.compact.down")
+                                .font(.system(size: 20, weight: .medium))
+                                .foregroundStyle(theme.textPrimary.opacity(0.7))
+                                .frame(width: 44, height: 44)
+                        }
                     }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
 
-                    Text("To: \(displayPartnerName)")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(theme.textPrimary.opacity(0.8))
-                }
-                .padding(.horizontal, 30)
-                .padding(.bottom, 20)
-
-                // Message input
-                ZStack(alignment: .topLeading) {
-                    if message.isEmpty {
-                        Text("Write a message...")
-                            .font(.system(size: 16, weight: .regular))
-                            .foregroundStyle(theme.textMuted.opacity(0.5))
-                            .padding(.top, 12)
-                            .padding(.leading, 16)
-                    }
-
-                    TextEditor(text: $message)
-                        .font(.system(size: 16, weight: .regular))
+                    // Title
+                    Text("Write a note")
+                        .font(.system(size: 32, weight: .bold))
                         .foregroundStyle(theme.textPrimary)
-                        .scrollContentBackground(.hidden)
-                        .background(Color.clear)
-                        .focused($isMessageFocused)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                }
-                .frame(height: 200)
-                .padding(.horizontal, 20)
+                        .padding(.top, 20)
 
-                // Decorative hearts
-                HStack {
-                    Spacer()
-                    Image(systemName: "heart")
-                        .font(.system(size: 28))
-                        .foregroundStyle(theme.textMuted.opacity(0.2))
+                    // Heart icon
                     Image(systemName: "heart.fill")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.pink.opacity(0.3))
-                        .offset(x: -8, y: 8)
-                }
-                .padding(.trailing, 40)
-                .padding(.top, 20)
+                        .font(.system(size: 50))
+                        .foregroundStyle(.pink.opacity(0.8))
+                        .padding(.top, 30)
+                        .padding(.bottom, 30)
 
-                Spacer()
+                    // From/To info
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("From: \(userName)")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(theme.textPrimary.opacity(0.8))
 
-                // Send button
-                Button(action: handleSend) {
-                    Text("Send")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.textMuted : theme.textPrimary)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 56)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                      ? theme.textMuted.opacity(0.2)
-                                      : theme.buttonFill.opacity(0.5))
-                        )
+                            Spacer()
+
+                            Text(todayString)
+                                .font(.system(size: 14, weight: .regular))
+                                .foregroundStyle(theme.textMuted)
+                        }
+
+                        Text("To: \(displayPartnerName)")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(theme.textPrimary.opacity(0.8))
+                    }
+                    .padding(.horizontal, 30)
+                    .padding(.bottom, 20)
+
+                    // Message input
+                    ZStack(alignment: .topLeading) {
+                        if message.isEmpty {
+                            Text("Write a message...")
+                                .font(.system(size: 16, weight: .regular))
+                                .foregroundStyle(theme.textMuted.opacity(0.5))
+                                .padding(.top, 12)
+                                .padding(.leading, 16)
+                        }
+
+                        TextEditor(text: $message)
+                            .font(.system(size: 16, weight: .regular))
+                            .foregroundStyle(theme.textPrimary)
+                            .scrollContentBackground(.hidden)
+                            .background(Color.clear)
+                            .focused($isMessageFocused)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                    }
+                    .frame(height: 200)
+                    .padding(.horizontal, 20)
+
+                    // Decorative hearts
+                    HStack {
+                        Spacer()
+                        Image(systemName: "heart")
+                            .font(.system(size: 28))
+                            .foregroundStyle(theme.textMuted.opacity(0.2))
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.pink.opacity(0.3))
+                            .offset(x: -8, y: 8)
+                    }
+                    .padding(.trailing, 40)
+                    .padding(.top, 20)
+
+                    // Send button
+                    Button(action: handleSend) {
+                        Text("Send")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.textMuted : theme.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 56)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                          ? theme.textMuted.opacity(0.2)
+                                          : theme.buttonFill.opacity(0.5))
+                            )
+                    }
+                    .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 40)
+                    .padding(.bottom, 30)
                 }
-                .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
             }
+            .scrollDismissesKeyboard(.interactively)
         }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

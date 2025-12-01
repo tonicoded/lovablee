@@ -821,6 +821,16 @@ begin
     values (v_couple_key, auth.uid(), coalesce(sender_display_name, 'Someone'), p_message)
     returning * into new_note;
 
+    -- Send push notification to partner
+    if partner_user_id is not null then
+        perform public.send_test_push(
+            partner_user_id,
+            '💌 ' || coalesce(sender_display_name, 'Someone') || ' sent you a love note',
+            left(p_message, 100),
+            jsonb_build_object('type', 'love_note', 'note_id', new_note.id)
+        );
+    end if;
+
     return new_note;
 end;
 $$;
