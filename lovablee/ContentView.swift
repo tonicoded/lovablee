@@ -365,13 +365,13 @@ struct ContentView: View {
     private func loadActivityFromServer() async throws -> [SupabaseActivityItem] {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.fetchCoupleActivity(session: session,
-                                                                     limit: 50)
+                                                                     limit: 10)
         }
     }
 
     private func loadLoveNotesFromServer() async throws -> [LoveNote] {
         return try await performWithFreshSession { session in
-            try await SupabaseAuthService.shared.getLoveNotes(session: session, limit: 50)
+            try await SupabaseAuthService.shared.getLoveNotes(session: session, limit: 10)
         }
     }
 

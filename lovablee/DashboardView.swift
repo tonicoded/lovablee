@@ -1435,68 +1435,86 @@ private struct ActivityFeedView: View {
                 }
                 .padding(.top, safeAreaInsets.top + 6)
 
-                if isLoading && items.isEmpty {
+                if (isLoading || isLoveNotesLoading) && items.isEmpty && loveNotes.isEmpty {
                     HStack {
                         ProgressView()
                             .tint(theme.textPrimary)
-                        Text("Loading activity…")
+                        Text("Loading…")
                             .foregroundColor(theme.textPrimary)
                             .font(.system(.body, weight: .medium))
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 30)
-                } else if items.isEmpty {
+                } else if items.isEmpty && loveNotes.isEmpty {
                     emptyState
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 12) {
+                        LazyVStack(spacing: 16) {
                             // Love Notes Section
                             if !loveNotes.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 12) {
                                     HStack {
                                         Image(systemName: "heart.text.square.fill")
-                                            .font(.system(size: 16, weight: .semibold))
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundColor(.pink.opacity(0.8))
                                         Text("Love Notes")
-                                            .font(.system(size: 18, weight: .bold))
+                                            .font(.system(size: 19, weight: .bold))
+                                            .foregroundColor(theme.textPrimary)
+                                        Text("(\(loveNotes.count))")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(theme.textMuted.opacity(0.6))
+                                        Spacer()
                                     }
-                                    .foregroundColor(theme.textPrimary)
                                     .padding(.horizontal, 4)
-                                    .padding(.top, 8)
 
-                                    ForEach(loveNotes.prefix(5)) { note in
+                                    ForEach(loveNotes) { note in
                                         LoveNoteCard(note: note,
                                                      theme: theme,
                                                      isLightsOut: isLightsOut,
                                                      currentUserId: userId ?? "")
                                     }
                                 }
-                                .padding(.bottom, 16)
+                                .padding(.bottom, 8)
+
+                                // Divider between sections
+                                if !items.isEmpty {
+                                    Divider()
+                                        .background(theme.textMuted.opacity(0.3))
+                                        .padding(.vertical, 8)
+                                }
                             }
 
                             // Activity Items Section
                             if !items.isEmpty {
-                                HStack {
-                                    Image(systemName: "clock.fill")
-                                        .font(.system(size: 16, weight: .semibold))
-                                    Text("Recent Activity")
-                                        .font(.system(size: 18, weight: .bold))
+                                VStack(alignment: .leading, spacing: 12) {
+                                    HStack {
+                                        Image(systemName: "clock.fill")
+                                            .font(.system(size: 16, weight: .bold))
+                                            .foregroundColor(theme.buttonFill.opacity(0.9))
+                                        Text("Recent Activity")
+                                            .font(.system(size: 19, weight: .bold))
+                                            .foregroundColor(theme.textPrimary)
+                                        Text("(\(items.count))")
+                                            .font(.system(size: 15, weight: .semibold))
+                                            .foregroundColor(theme.textMuted.opacity(0.6))
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 4)
+
+                                    ForEach(items) { item in
+                                        ActivityRow(item: item,
+                                                    theme: theme,
+                                                    isLightsOut: isLightsOut,
+                                                    title: description(for: item),
+                                                    timestamp: relativeDate(for: item.createdAt),
+                                                    avatar: avatar(for: item),
+                                                    accent: accent(for: item))
+                                    }
                                 }
-                                .foregroundColor(theme.textPrimary)
-                                .padding(.horizontal, 4)
-                                .padding(.top, 4)
                             }
 
-                            ForEach(items) { item in
-                                ActivityRow(item: item,
-                                            theme: theme,
-                                            isLightsOut: isLightsOut,
-                                            title: description(for: item),
-                                            timestamp: relativeDate(for: item.createdAt),
-                                            avatar: avatar(for: item),
-                                            accent: accent(for: item))
-                            }
-                            if isLoading {
+                            if isLoading || isLoveNotesLoading {
                                 ProgressView()
                                     .tint(theme.textPrimary)
                                     .padding(.vertical, 12)
