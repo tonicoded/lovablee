@@ -25,11 +25,13 @@ struct DashboardView: View {
     var loadActivityFeed: (() async throws -> [SupabaseActivityItem])? = nil
     var onPetAlert: ((String, String) -> Void)? = nil
     var onRenamePet: ((String) async throws -> Void)? = nil
+    var onSendLoveNote: ((String) async throws -> Void)? = nil
     var userEmail: String?
     var onRefreshPairing: (() -> Void)? = nil
     @State private var activeTab: DashboardNavTab = .home
     @State private var keyboardHeight: CGFloat = 0
     @State private var isPetSheetPresented = false
+    @State private var isLoveNoteSheetPresented = false
     @State private var petStatus: SupabasePetStatus?
     @State private var isPetStatusLoading = false
     @State private var isPerformingPetAction = false
@@ -83,6 +85,9 @@ struct DashboardView: View {
                                    },
                                    playAction: {
                                         triggerPetShortcut(.play)
+                                   },
+                                   loveboxAction: {
+                                        isLoveNoteSheetPresented = true
                                    },
                                    waterEnabled: waterReady,
                                    playEnabled: playReady,
@@ -211,6 +216,20 @@ struct DashboardView: View {
             .ignoresSafeArea(edges: [.top, .bottom])
             .ignoresSafeArea(.keyboard)
             .animation(.spring(response: 0.5, dampingFraction: 0.9), value: activeTab)
+            .sheet(isPresented: $isLoveNoteSheetPresented) {
+                LoveNoteSheet(userName: name,
+                              partnerName: partnerName,
+                              isLightsOut: isLightsOut,
+                              onSend: { message in
+                                  Task {
+                                      do {
+                                          try await onSendLoveNote?(message)
+                                      } catch {
+                                          print("Error sending love note: \(error)")
+                                      }
+                                  }
+                              })
+            }
             .fullScreenCover(isPresented: $isPetSheetPresented) {
                 ZStack {
                     PetLayoutTab(theme: theme,

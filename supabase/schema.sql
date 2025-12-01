@@ -447,6 +447,9 @@ begin
         set hydration_level = next_hydration,
             playfulness_level = next_play,
             mood = public.compute_pet_mood(next_hydration, next_play),
+            pet_name = base_status.pet_name,
+            last_watered_at = base_status.last_watered_at,
+            last_played_at = base_status.last_played_at,
             updated_at = now_utc
         where user_id = partner_user_id;
     end if;
@@ -638,8 +641,8 @@ begin
     updated_status.last_active_date := couple_row.last_active_date;
 
     if action_type = 'water' then
-        if updated_status.last_watered_at is not null
-            and now_utc - updated_status.last_watered_at < water_cooldown then
+        if base_status.last_watered_at is not null
+            and now_utc - base_status.last_watered_at < water_cooldown then
             raise exception 'pet_action_cooldown'
                 using detail = 'water';
         end if;
@@ -669,12 +672,13 @@ begin
                 playfulness_level = new_play,
                 last_watered_at = now_utc,
                 mood = public.compute_pet_mood(new_hydration, new_play),
+                pet_name = base_status.pet_name,
                 updated_at = now_utc
             where user_id = partner_user_id;
         end if;
     elsif action_type = 'play' then
-        if updated_status.last_played_at is not null
-            and now_utc - updated_status.last_played_at < play_cooldown then
+        if base_status.last_played_at is not null
+            and now_utc - base_status.last_played_at < play_cooldown then
             raise exception 'pet_action_cooldown'
                 using detail = 'play';
         end if;
@@ -704,6 +708,7 @@ begin
                 hydration_level = new_hydration,
                 last_played_at = now_utc,
                 mood = public.compute_pet_mood(new_hydration, new_play),
+                pet_name = base_status.pet_name,
                 updated_at = now_utc
             where user_id = partner_user_id;
         end if;
@@ -721,6 +726,157 @@ end;
 $$;
 
 grant execute on function public.record_pet_action(text) to authenticated;
+
+-- Love Notes table for couple messages
+create table if not exists public.love_notes (
+    id uuid primary key default gen_random_uuid(),
+    couple_key text not null,
+    sender_id uuid not null references public.users (id) on delete cascade,
+    sender_name text not null,
+    message text not null,
+    is_read boolean not null default false,
+    created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists love_notes_couple_key_idx on public.love_notes (couple_key, created_at desc);
+create index if not exists love_notes_sender_idx on public.love_notes (sender_id);
+
+alter table public.love_notes enable row level security;
+
+drop policy if exists "Couple can read love notes" on public.love_notes;
+drop policy if exists "Users can send love notes" on public.love_notes;
+
+create policy "Couple can read love notes"
+    on public.love_notes for select using (
+        exists (
+            select 1
+            from public.users u
+            left join public.users partner on partner.id = u.partner_id
+            where u.id = auth.uid()
+              and couple_key = case
+                  when partner.pairing_code is null then u.pairing_code
+                  when u.pairing_code <= partner.pairing_code then u.pairing_code
+                  else partner.pairing_code
+              end
+        )
+    );
+
+create policy "Users can send love notes"
+    on public.love_notes for insert with check (
+        sender_id = auth.uid()
+        and exists (
+            select 1
+            from public.users u
+            left join public.users partner on partner.id = u.partner_id
+            where u.id = auth.uid()
+              and couple_key = case
+                  when partner.pairing_code is null then u.pairing_code
+                  when u.pairing_code <= partner.pairing_code then u.pairing_code
+                  else partner.pairing_code
+              end
+        )
+    );
+
+create or replace function public.send_love_note(p_message text)
+returns public.love_notes
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    partner_user_id uuid;
+    my_pairing_code text;
+    partner_pairing_code text;
+    v_couple_key text;
+    sender_display_name text;
+    new_note public.love_notes%rowtype;
+begin
+    select partner_id, pairing_code, display_name
+    into partner_user_id, my_pairing_code, sender_display_name
+    from public.users where id = auth.uid();
+
+    if partner_user_id is null then
+        raise exception 'no_partner';
+    end if;
+
+    if partner_user_id = auth.uid() then
+        raise exception 'cannot_send_to_self';
+    end if;
+
+    select pairing_code into partner_pairing_code
+    from public.users where id = partner_user_id;
+
+    if partner_pairing_code is null then
+        v_couple_key := my_pairing_code;
+    elsif my_pairing_code is null then
+        v_couple_key := partner_pairing_code;
+    else
+        v_couple_key := case
+            when my_pairing_code <= partner_pairing_code then my_pairing_code
+            else partner_pairing_code
+        end;
+    end if;
+
+    insert into public.love_notes (couple_key, sender_id, sender_name, message)
+    values (v_couple_key, auth.uid(), coalesce(sender_display_name, 'Someone'), p_message)
+    returning * into new_note;
+
+    return new_note;
+end;
+$$;
+
+grant execute on function public.send_love_note(text) to authenticated;
+
+create or replace function public.get_love_notes(p_limit integer default 50)
+returns setof public.love_notes
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    partner_user_id uuid;
+    my_pairing_code text;
+    partner_pairing_code text;
+    v_couple_key text;
+    safe_limit integer := greatest(1, coalesce(p_limit, 50));
+begin
+    select partner_id, pairing_code into partner_user_id, my_pairing_code
+    from public.users where id = auth.uid();
+
+    if partner_user_id = auth.uid() then
+        partner_user_id := null;
+    end if;
+
+    if partner_user_id is not null then
+        select pairing_code into partner_pairing_code
+        from public.users where id = partner_user_id;
+    end if;
+
+    if partner_pairing_code is null then
+        v_couple_key := my_pairing_code;
+    elsif my_pairing_code is null then
+        v_couple_key := partner_pairing_code;
+    else
+        v_couple_key := case
+            when my_pairing_code <= partner_pairing_code then my_pairing_code
+            else partner_pairing_code
+        end;
+    end if;
+
+    if v_couple_key is null then
+        return;
+    end if;
+
+    return query
+    select *
+    from public.love_notes
+    where couple_key = v_couple_key
+    order by created_at desc
+    limit safe_limit;
+end;
+$$;
+
+grant execute on function public.get_love_notes(integer) to authenticated;
 
 -- 3. Storage bucket + policies for profile photos
 insert into storage.buckets (id, name, public)

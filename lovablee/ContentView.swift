@@ -117,6 +117,9 @@ struct ContentView: View {
                               onRenamePet: { name in
                                   try await renamePet(to: name)
                               },
+                              onSendLoveNote: { message in
+                                  _ = try await sendLoveNote(message: message)
+                              },
                               userEmail: userRecord?.email,
                               onRefreshPairing: { ensureLatestUserRecordIfMissing(force: true) })
                 .onAppear {
@@ -347,6 +350,12 @@ struct ContentView: View {
     private func renamePet(to name: String) async throws {
         _ = try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.updatePetName(session: session, petName: name)
+        }
+    }
+
+    private func sendLoveNote(message: String) async throws -> LoveNote {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.sendLoveNote(session: session, message: message)
         }
     }
 
@@ -1510,6 +1519,7 @@ struct CozyDecorLayer: View {
     let lightAction: (() -> Void)?
     let waterAction: (() -> Void)?
     let playAction: (() -> Void)?
+    let loveboxAction: (() -> Void)?
     let waterEnabled: Bool
     let playEnabled: Bool
     let decorPlacement: DecorPlacement
@@ -1523,6 +1533,7 @@ struct CozyDecorLayer: View {
          lightAction: (() -> Void)?,
          waterAction: (() -> Void)? = nil,
          playAction: (() -> Void)? = nil,
+         loveboxAction: (() -> Void)? = nil,
          waterEnabled: Bool = true,
          playEnabled: Bool = true,
          decorPlacement: DecorPlacement = .onboarding,
@@ -1535,6 +1546,7 @@ struct CozyDecorLayer: View {
             self.lightAction = lightAction
             self.waterAction = waterAction
             self.playAction = playAction
+            self.loveboxAction = loveboxAction
             self.decorPlacement = decorPlacement
             self.heroAction = heroAction
             self.heroAllowsInteraction = heroAllowsInteraction
@@ -1626,9 +1638,8 @@ struct CozyDecorLayer: View {
                             y: decorPlacement.loveboxY * scale,
                             baseWidth: size.width,
                             theme: theme,
-                            action: { hapticSoft() },
-                            isEnabled: false)
-            .allowsHitTesting(false)
+                            action: { loveboxAction?() },
+                            isEnabled: allowInteractions && loveboxAction != nil)
 
             InteractiveProp(imageName: "tv",
                             width: decorPlacement.tvWidth * scale,
@@ -2238,6 +2249,40 @@ private final class SupabaseAuthService {
         return try decoder.decode(SupabaseUserRegistrationResult.self, from: data)
     }
 
+    func sendLoveNote(session: SupabaseSession, message: String) async throws -> LoveNote {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/send_love_note"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload = ["p_message": message]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        _ = try validateResponse(data, response)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(LoveNote.self, from: data)
+    }
+
+    func getLoveNotes(session: SupabaseSession, limit: Int = 50) async throws -> [LoveNote] {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/get_love_notes"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload = ["p_limit": limit]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        _ = try validateResponse(data, response)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([LoveNote].self, from: data)
+    }
+
     func uploadProfileImage(session: SupabaseSession, imageData: Data) async throws -> String {
         let path = "storage/v1/object/\(storageBucketPath)/profiles/\(session.user.id).jpg"
         var request = URLRequest(url: projectURL.appendingPathComponent(path))
@@ -2751,6 +2796,180 @@ extension Layout {
         if size.height < 720 { return 10 }   // move props down slightly on SE
         if size.height < 780 { return 12 }
         return 0
+    }
+}
+
+// MARK: - Love Note Sheet
+struct LoveNoteSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let userName: String
+    let partnerName: String?
+    let isLightsOut: Bool
+    let onSend: (String) -> Void
+
+    @State private var message: String = ""
+    @FocusState private var isMessageFocused: Bool
+
+    private var theme: PaletteTheme {
+        isLightsOut ? Palette.darkTheme : Palette.lightTheme
+    }
+
+    private var displayPartnerName: String {
+        partnerName ?? "Your partner"
+    }
+
+    private var todayString: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        return formatter.string(from: Date())
+    }
+
+    var body: some View {
+        ZStack {
+            // Background
+            backgroundGradient(isDark: isLightsOut)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Button(action: { dismiss() }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(theme.textPrimary.opacity(0.7))
+                            .frame(width: 44, height: 44)
+                    }
+
+                    Spacer()
+
+                    Button(action: {}) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(theme.textPrimary.opacity(0.3))
+                            .frame(width: 44, height: 44)
+                    }
+                    .disabled(true)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+
+                // Title
+                Text("Write a note")
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(theme.textPrimary)
+                    .padding(.top, 20)
+
+                // Heart icon
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 50))
+                    .foregroundStyle(.pink.opacity(0.8))
+                    .padding(.top, 30)
+                    .padding(.bottom, 30)
+
+                // From/To info
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("From: \(userName)")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(theme.textPrimary.opacity(0.8))
+
+                        Spacer()
+
+                        Text(todayString)
+                            .font(.system(size: 14, weight: .regular))
+                            .foregroundStyle(theme.textMuted)
+                    }
+
+                    Text("To: \(displayPartnerName)")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(theme.textPrimary.opacity(0.8))
+                }
+                .padding(.horizontal, 30)
+                .padding(.bottom, 20)
+
+                // Message input
+                ZStack(alignment: .topLeading) {
+                    if message.isEmpty {
+                        Text("Write a message...")
+                            .font(.system(size: 16, weight: .regular))
+                            .foregroundStyle(theme.textMuted.opacity(0.5))
+                            .padding(.top, 12)
+                            .padding(.leading, 16)
+                    }
+
+                    TextEditor(text: $message)
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(theme.textPrimary)
+                        .scrollContentBackground(.hidden)
+                        .background(Color.clear)
+                        .focused($isMessageFocused)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                }
+                .frame(height: 200)
+                .padding(.horizontal, 20)
+
+                // Decorative hearts
+                HStack {
+                    Spacer()
+                    Image(systemName: "heart")
+                        .font(.system(size: 28))
+                        .foregroundStyle(theme.textMuted.opacity(0.2))
+                    Image(systemName: "heart.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.pink.opacity(0.3))
+                        .offset(x: -8, y: 8)
+                }
+                .padding(.trailing, 40)
+                .padding(.top, 20)
+
+                Spacer()
+
+                // Send button
+                Button(action: handleSend) {
+                    Text("Send")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? theme.textMuted : theme.textPrimary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 56)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                      ? theme.textMuted.opacity(0.2)
+                                      : theme.buttonFill.opacity(0.5))
+                        )
+                }
+                .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 30)
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                isMessageFocused = true
+            }
+        }
+    }
+
+    private func handleSend() {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        hapticSoft()
+        onSend(trimmed)
+        dismiss()
+    }
+
+    private func backgroundGradient(isDark: Bool) -> LinearGradient {
+        if isDark {
+            return LinearGradient(colors: [
+                Color(red: 0.08, green: 0.07, blue: 0.08),
+                Color(red: 0.12, green: 0.1, blue: 0.12)
+            ], startPoint: .top, endPoint: .bottom)
+        }
+        return LinearGradient(colors: [
+            Palette.cream,
+            Palette.peach.opacity(0.35)
+        ], startPoint: .top, endPoint: .bottom)
     }
 }
 

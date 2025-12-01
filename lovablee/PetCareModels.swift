@@ -81,6 +81,26 @@ enum PetActionType: String, Codable {
     case play
 }
 
+struct LoveNote: Codable, Identifiable {
+    let id: UUID
+    let coupleKey: String
+    let senderId: String
+    let senderName: String
+    let message: String
+    let isRead: Bool
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case coupleKey
+        case senderId
+        case senderName
+        case message
+        case isRead
+        case createdAt
+    }
+}
+
 struct SupabaseActivityItem: Codable, Identifiable {
     let id: UUID
     let coupleKey: String?
