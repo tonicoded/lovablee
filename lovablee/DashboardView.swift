@@ -31,6 +31,8 @@ struct DashboardView: View {
     var loadLoveNotes: (() async throws -> [LoveNote])? = nil
     var onSaveDoodle: ((UIImage) async throws -> Void)? = nil
     var loadDoodles: (() async throws -> [Doodle])? = nil
+    var onSendGift: ((String, String) async throws -> Void)? = nil
+    var loadGifts: (() async throws -> [PurchasedGift])? = nil
     var userEmail: String?
     var onRefreshPairing: (() -> Void)? = nil
     @State private var activeTab: DashboardNavTab = .home
@@ -41,6 +43,7 @@ struct DashboardView: View {
     @State private var isLoveboxInboxPresented = false
     @State private var isDoodleSheetPresented = false
     @State private var isDoodleGalleryPresented = false
+    @State private var isGiftsSheetPresented = false
     @State private var cooldownAlert: CooldownAlert?
     @State private var petStatus: SupabasePetStatus?
     @State private var isPetStatusLoading = false
@@ -113,6 +116,14 @@ struct DashboardView: View {
                                    galleryAction: {
                                         isDoodleGalleryPresented = true
                                    },
+                                   giftAction: {
+                                        Task {
+                                            await refreshPetStatusAsync()
+                                            await MainActor.run {
+                                                isGiftsSheetPresented = true
+                                            }
+                                        }
+                                   },
                                    waterEnabled: waterReady,
                                    playEnabled: playReady,
                                    plantEnabled: true, // Always enabled - cooldown shown in sheet
@@ -157,8 +168,18 @@ struct DashboardView: View {
                                      dogName: petDisplayName,
                                      onWater: { triggerPetShortcut(.water) },
                                      onPlay: { triggerPetShortcut(.play) },
+                                     onFeed: { triggerPetShortcut(.feed) },
+                                     onPlant: { triggerPetShortcut(.plant) },
                                      onNote: { triggerPetShortcut(.note) },
-                                     onDoodle: { triggerPetShortcut(.doodle) })
+                                     onDoodle: { triggerPetShortcut(.doodle) },
+                                     onGift: {
+                                         Task {
+                                             await refreshPetStatusAsync()
+                                             await MainActor.run {
+                                                 isGiftsSheetPresented = true
+                                             }
+                                         }
+                                     })
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
 
@@ -448,6 +469,21 @@ struct DashboardView: View {
                     refreshDoodles(force: true)
                 }
             }
+            .sheet(isPresented: $isGiftsSheetPresented) {
+                GiftsView(
+                    currentHearts: Binding(
+                        get: { petStatus?.hearts ?? 0 },
+                        set: { _ in }
+                    ),
+                    onPurchase: { gift, message in
+                        Task {
+                            await sendGift(gift: gift, message: message)
+                        }
+                    },
+                    loadGifts: loadGifts,
+                    userIdentifier: userIdentifier
+                )
+            }
             .fullScreenCover(isPresented: $isPetSheetPresented) {
                 ZStack {
                     PetLayoutTab(theme: theme,
@@ -557,7 +593,12 @@ struct DashboardView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
-            keyboardHeight = Self.keyboardHeight(from: notification)
+            // Only respond to keyboard when no sheets are presented
+            if !isGiftsSheetPresented && !isPetSheetPresented && !isPlantSheetPresented &&
+               !isLoveNoteSheetPresented && !isLoveboxInboxPresented && !isDoodleSheetPresented &&
+               !isDoodleGalleryPresented {
+                keyboardHeight = Self.keyboardHeight(from: notification)
+            }
         }
         .onAppear {
             refreshPetStatus()
@@ -582,6 +623,12 @@ struct DashboardView: View {
         .onChange(of: activeTab) { _, newValue in
             if newValue == .activity {
                 refreshActivity(force: activityItems.isEmpty)
+            }
+        }
+        .onChange(of: isGiftsSheetPresented) { _, isPresented in
+            if !isPresented {
+                // Reset keyboard height when sheet is dismissed
+                keyboardHeight = 0
             }
         }
         .onChange(of: scenePhase) { oldPhase, newPhase in
@@ -884,6 +931,64 @@ struct DashboardView: View {
                     }
                 }
                 isDoodleSheetPresented = true
+            }
+        }
+    }
+
+    private func sendGift(gift: GiftItem, message: String) async {
+        print("🎁 sendGift called - Gift: \(gift.name), Cost: \(gift.cost)")
+
+        guard let status = petStatus else {
+            print("❌ Pet status is nil")
+            onPetAlert?("Error", "Unable to load your status. Please try again.")
+            return
+        }
+
+        print("🎁 Current hearts: \(status.hearts), Required: \(gift.cost), Has enough: \(status.hearts >= gift.cost)")
+
+        guard status.hearts >= gift.cost else {
+            print("❌ Not enough hearts")
+            onPetAlert?("Not enough hearts", "You need \(gift.cost) hearts but only have \(status.hearts) hearts.")
+            return
+        }
+
+        do {
+            let previousHearts = status.hearts
+            print("🎁 Sending gift \(gift.name)... Current hearts: \(previousHearts)")
+
+            // Call the backend API to send gift
+            try await onSendGift?(gift.name, message)
+            print("🎁 Gift sent successfully!")
+
+            // Refresh pet status to get updated hearts
+            await refreshPetStatusAsync()
+
+            // Show success message
+            await MainActor.run {
+                if let newStatus = petStatus {
+                    let heartsSpent = previousHearts - newStatus.hearts
+                    onPetAlert?("🎁 Gift Sent!", "You sent a \(gift.name) to \(partnerName ?? "your partner")! (-\(heartsSpent) hearts)")
+                }
+            }
+
+            // Refresh activity feed
+            await MainActor.run {
+                refreshActivity(force: true)
+            }
+        } catch {
+            print("❌ Error sending gift: \(error)")
+            let errorMessage = error.localizedDescription.lowercased()
+
+            if errorMessage.contains("no_partner") || errorMessage.contains("no partner") {
+                onPetAlert?("No Partner", "You need to be paired with a partner to send gifts.")
+            } else if errorMessage.contains("insufficient_hearts") || errorMessage.contains("insufficient hearts") {
+                onPetAlert?("Not Enough Hearts", "You don't have enough hearts to send this gift.")
+            } else if errorMessage.contains("session") || errorMessage.contains("unauthorized") {
+                onPetAlert?("Session Expired", "Please refresh the app and try again.")
+            } else if errorMessage.contains("function") || errorMessage.contains("does not exist") || errorMessage.contains("undefined") {
+                onPetAlert?("Database Error", "The gifts feature isn't set up yet. Please run the migration:\n\nsupabase/migrations/add_gifts_feature.sql")
+            } else {
+                onPetAlert?("Error", "Failed to send gift. Check the console for details.\n\n\(error.localizedDescription)")
             }
         }
     }
@@ -1702,7 +1807,7 @@ private enum DashboardDecor {
 
     static let giftWidth: CGFloat = 180
     static let giftXOffset: CGFloat = 100
-    static let giftOffsetFromFloor: CGFloat = 580
+    static let giftY: CGFloat = 210  // Absolute Y position like gallery/window
 
     static var placement: DecorPlacement {
         DecorPlacement.dashboard(
@@ -1736,7 +1841,7 @@ private enum DashboardDecor {
             heroOffsetFromFloor: heroOffsetFromFloor,
             giftWidth: giftWidth,
             giftXOffset: giftXOffset,
-            giftOffsetFromFloor: giftOffsetFromFloor
+            giftY: giftY
         )
     }
 }
@@ -1812,8 +1917,11 @@ private struct ShortcutsTabView: View {
     let dogName: String
     let onWater: () -> Void
     let onPlay: () -> Void
+    let onFeed: () -> Void
+    let onPlant: () -> Void
     let onNote: () -> Void
     let onDoodle: () -> Void
+    let onGift: () -> Void
 
     private struct ShortcutItem: Identifiable {
         let id = UUID()
@@ -1843,6 +1951,16 @@ private struct ShortcutsTabView: View {
                          subtitle: "Improve mood",
                          tint: Color(red: 0.98, green: 0.52, blue: 0.64),
                          action: onPlay),
+            ShortcutItem(icon: "fork.knife",
+                         title: "Feed \(dogName)",
+                         subtitle: "Improve mood",
+                         tint: Color(red: 0.95, green: 0.65, blue: 0.35),
+                         action: onFeed),
+            ShortcutItem(icon: "leaf.fill",
+                         title: "Water plant",
+                         subtitle: "Improve mood",
+                         tint: Color(red: 0.45, green: 0.85, blue: 0.45),
+                         action: onPlant),
             ShortcutItem(icon: "heart.text.square.fill",
                          title: "Send love note",
                          subtitle: "Earn +10 hearts (1h cooldown)",
@@ -1852,7 +1970,12 @@ private struct ShortcutsTabView: View {
                          title: "Create doodle",
                          subtitle: "Earn +10 hearts (15m cooldown)",
                          tint: Color(red: 0.75, green: 0.45, blue: 0.95),
-                         action: onDoodle)
+                         action: onDoodle),
+            ShortcutItem(icon: "gift.fill",
+                         title: "Send gift",
+                         subtitle: "Send a gift to your partner",
+                         tint: Color(red: 1.0, green: 0.4, blue: 0.4),
+                         action: onGift)
         ]
     }
 

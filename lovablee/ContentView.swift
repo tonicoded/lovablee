@@ -42,6 +42,8 @@ struct ContentView: View {
     @State private var profileRefreshTask: Task<Void, Never>?
     @State private var profilePhotoVersion = UUID().uuidString
     @State private var partnerPhotoVersion = UUID().uuidString
+    @State private var unopenedGift: PurchasedGift?
+    @State private var showGiftReceivedModal = false
 
     var body: some View {
         ZStack {
@@ -153,11 +155,18 @@ struct ContentView: View {
                               loadDoodles: {
                                   try await loadDoodlesFromServer()
                               },
+                              onSendGift: { giftType, message in
+                                  _ = try await sendGift(giftType: giftType, message: message)
+                              },
+                              loadGifts: {
+                                  try await loadGiftsFromServer()
+                              },
                               userEmail: userRecord?.email,
                               onRefreshPairing: { ensureLatestUserRecordIfMissing(force: true) })
                 .onAppear {
                     ensureLatestUserRecordIfMissing()
                     startProfileAutoRefresh()
+                    checkForUnopenedGifts()
                 }
             }
         }
@@ -165,6 +174,19 @@ struct ContentView: View {
             attemptSessionRestoreIfNeeded()
         }
         .preferredColorScheme(.light)
+        .fullScreenCover(item: $unopenedGift) { gift in
+            ReceivedGiftModal(gift: gift)
+                .onDisappear {
+                    Task {
+                        do {
+                            try await markGiftAsOpened(giftId: gift.id)
+                            print("🎁 Marked gift \(gift.id) as opened")
+                        } catch {
+                            print("❌ Failed to mark gift as opened: \(error)")
+                        }
+                    }
+                }
+        }
         .confirmationDialog("Delete account?",
                             isPresented: $showDeleteConfirmation,
                             titleVisibility: .visible) {
@@ -180,6 +202,7 @@ struct ContentView: View {
         .onChange(of: stage) { _, newStage in
             if newStage == .dashboard {
                 ensureLatestUserRecordIfMissing(force: true)
+                checkForUnopenedGifts()
                 startProfileAutoRefresh()
             }
             if newStage != .dashboard {
@@ -431,6 +454,47 @@ struct ContentView: View {
     private func loadDoodlesFromServer() async throws -> [Doodle] {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.getDoodles(session: session, limit: 50)
+        }
+    }
+
+    private func sendGift(giftType: String, message: String) async throws -> PurchasedGift {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.sendGift(session: session, giftType: giftType, message: message)
+        }
+    }
+
+    private func loadGiftsFromServer() async throws -> [PurchasedGift] {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.getGifts(session: session)
+        }
+    }
+
+    private func markGiftAsOpened(giftId: UUID) async throws {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.markGiftAsOpened(session: session, giftId: giftId)
+        }
+    }
+
+    private func checkForUnopenedGifts() {
+        Task {
+            do {
+                let gifts = try await loadGiftsFromServer()
+                let myUserId = supabaseSession?.user.id
+
+                // Find the first unopened gift that was sent TO me
+                if let receivedGift = gifts.first(where: {
+                    $0.recipientId == myUserId && !$0.isOpened
+                }) {
+                    print("🎁 Found unopened gift from \(receivedGift.senderName): \(receivedGift.giftType)")
+                    await MainActor.run {
+                        unopenedGift = receivedGift
+                    }
+                } else {
+                    print("🎁 No unopened gifts found")
+                }
+            } catch {
+                print("❌ Error checking for unopened gifts: \(error)")
+            }
         }
     }
 
@@ -1647,6 +1711,7 @@ struct CozyDecorLayer: View {
     let plantAction: (() -> Void)?
     let loveboxAction: (() -> Void)?
     let galleryAction: (() -> Void)?
+    let giftAction: (() -> Void)?
     let waterEnabled: Bool
     let playEnabled: Bool
     let plantEnabled: Bool
@@ -1664,6 +1729,7 @@ struct CozyDecorLayer: View {
          plantAction: (() -> Void)? = nil,
          loveboxAction: (() -> Void)? = nil,
          galleryAction: (() -> Void)? = nil,
+         giftAction: (() -> Void)? = nil,
          waterEnabled: Bool = true,
          playEnabled: Bool = true,
          plantEnabled: Bool = true,
@@ -1680,6 +1746,7 @@ struct CozyDecorLayer: View {
             self.plantAction = plantAction
             self.loveboxAction = loveboxAction
             self.galleryAction = galleryAction
+            self.giftAction = giftAction
             self.decorPlacement = decorPlacement
             self.heroAction = heroAction
             self.heroAllowsInteraction = heroAllowsInteraction
@@ -1709,7 +1776,6 @@ struct CozyDecorLayer: View {
         let plantOffset = isTablet ? decorPlacement.plantOffsetFromFloor : decorPlacement.plantOffsetFromFloor * scale
         let waterOffset = isTablet ? decorPlacement.waterOffsetFromFloor : decorPlacement.waterOffsetFromFloor * scale
         let toysOffset  = isTablet ? decorPlacement.toysOffsetFromFloor  : decorPlacement.toysOffsetFromFloor * scale
-        let giftOffset = isTablet ? decorPlacement.giftOffsetFromFloor : decorPlacement.giftOffsetFromFloor * scale
         let heroOffset  = isTablet ?
             decorPlacement.heroOffsetFromFloor :
             decorPlacement.heroOffsetFromFloor * scale * Layout.heroOffsetBoost(for: size)
@@ -1850,12 +1916,12 @@ struct CozyDecorLayer: View {
             InteractiveProp(imageName: "gift",
                             width: decorPlacement.giftWidth * scale,
                             xOffset: decorPlacement.giftXOffset * scaleX,
-                            y: floorY - giftOffset - yLift + propDrop + (isTablet ? Layout.floorVisualPadding : 0),
+                            y: decorPlacement.giftY * scale,
                             baseWidth: size.width,
                             theme: theme,
-                            action: { hapticSoft() },
-                            isEnabled: false)
-            .allowsHitTesting(false)
+                            action: { giftAction?() },
+                            isEnabled: allowInteractions && giftAction != nil)
+            .allowsHitTesting(allowInteractions && giftAction != nil)
             .zIndex(4)
 
             InteractiveProp(imageName: "window",
@@ -2504,6 +2570,56 @@ private final class SupabaseAuthService {
         return try decoder.decode([Doodle].self, from: data)
     }
 
+    func sendGift(session: SupabaseSession, giftType: String, message: String) async throws -> PurchasedGift {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/send_gift"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload: [String: Any] = [
+            "p_gift_type": giftType,
+            "p_message": message.isEmpty ? NSNull() : message
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(PurchasedGift.self, from: data)
+    }
+
+    func getGifts(session: SupabaseSession) async throws -> [PurchasedGift] {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/load_couple_gifts"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload: [String: Any] = [:]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode([PurchasedGift].self, from: data)
+    }
+
+    func markGiftAsOpened(session: SupabaseSession, giftId: UUID) async throws {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/mark_gift_opened"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload: [String: Any] = ["p_gift_id": giftId.uuidString]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+    }
+
     func uploadProfileImage(session: SupabaseSession, imageData: Data) async throws -> String {
         let path = "storage/v1/object/\(storageBucketPath)/profiles/\(session.user.id).jpg"
         var request = URLRequest(url: projectURL.appendingPathComponent(path))
@@ -2902,7 +3018,7 @@ struct DecorPlacement {
     var heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor
     var giftWidth: CGFloat = 80
     var giftXOffset: CGFloat = -120
-    var giftOffsetFromFloor: CGFloat = 20
+    var giftY: CGFloat = 380
 }
 
 extension DecorPlacement {
@@ -2946,7 +3062,7 @@ extension DecorPlacement {
         heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor,
         giftWidth: CGFloat = 80,
         giftXOffset: CGFloat = -120,
-        giftOffsetFromFloor: CGFloat = 20
+        giftY: CGFloat = 380
     ) -> DecorPlacement {
         var placement = DecorPlacement()
         placement.floorWidthFactor = floorWidthFactor
@@ -2979,7 +3095,7 @@ extension DecorPlacement {
         placement.heroOffsetFromFloor = heroOffsetFromFloor
         placement.giftWidth = giftWidth
         placement.giftXOffset = giftXOffset
-        placement.giftOffsetFromFloor = giftOffsetFromFloor
+        placement.giftY = giftY
         return placement
     }
 }

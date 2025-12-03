@@ -61,10 +61,14 @@ BEGIN
     VALUES (v_couple_key, auth.uid(), COALESCE(sender_display_name, 'Someone'), p_message)
     RETURNING * INTO new_note;
 
-    -- Award +10 hearts and update cooldown
+    -- Award +10 hearts to couple (SHARED hearts pool)
+    UPDATE public.couple_progress
+    SET hearts = hearts + 10
+    WHERE couple_key = v_couple_key;
+
+    -- Update cooldown timestamp
     UPDATE public.pet_status
-    SET hearts = hearts + 10,
-        last_note_sent_at = now()
+    SET last_note_sent_at = now()
     WHERE user_id = auth.uid();
 
     -- Send push notification to partner
@@ -140,10 +144,14 @@ BEGIN
     VALUES (v_couple_key, auth.uid(), COALESCE(sender_display_name, 'Someone'), p_storage_path, p_content)
     RETURNING * INTO new_doodle;
 
-    -- Award +10 hearts and update cooldown
+    -- Award +10 hearts to couple (SHARED hearts pool)
+    UPDATE public.couple_progress
+    SET hearts = hearts + 10
+    WHERE couple_key = v_couple_key;
+
+    -- Update cooldown timestamp
     UPDATE public.pet_status
-    SET hearts = hearts + 10,
-        last_doodle_created_at = now()
+    SET last_doodle_created_at = now()
     WHERE user_id = auth.uid();
 
     -- Send push notification to partner
