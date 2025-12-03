@@ -1,6 +1,22 @@
 import SwiftUI
 import PhotosUI
 
+struct Anniversary: Identifiable, Codable {
+    let id: UUID
+    let name: String
+    let date: Date
+
+    var daysAgo: Int {
+        Calendar.current.dateComponents([.day], from: date, to: Date()).day ?? 0
+    }
+
+    init(id: UUID = UUID(), name: String, date: Date) {
+        self.id = id
+        self.name = name
+        self.date = date
+    }
+}
+
 struct ProfileView: View {
     let theme: PaletteTheme
     let isLightsOut: Bool
@@ -21,11 +37,19 @@ struct ProfileView: View {
     let onSettings: (() -> Void)?
     let onRefreshPairing: (() -> Void)?
     let onUploadPhoto: ((Data) async -> Void)?
+    let onLoadAnniversaries: (() async throws -> (togetherSince: Date?, customAnniversaries: [Anniversary]))?
+    let onSetTogetherSince: ((Date) async throws -> Void)?
+    let onAddCustomAnniversary: ((String, Date) async throws -> Anniversary)?
+    let onDeleteCustomAnniversary: ((UUID) async throws -> Void)?
 
     @State private var partnerCode: String = ""
     @FocusState private var partnerFieldFocused: Bool
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isUploadingPhoto = false
+    @State private var togetherSinceDate: Date?
+    @State private var customAnniversaries: [Anniversary] = []
+    @State private var showAddAnniversary = false
+    @State private var isLoadingAnniversaries = false
 
     private enum ScrollTarget: String {
         case joinCard
@@ -42,6 +66,9 @@ struct ProfileView: View {
                         avatarRow
                         pairingSection
                         partnerStatusSection
+                        if partnerName != nil {
+                            anniversarySection
+                        }
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, safeAreaInsets.top + 30)
@@ -84,6 +111,24 @@ struct ProfileView: View {
                 await MainActor.run {
                     self.selectedPhotoItem = nil
                     self.isUploadingPhoto = false
+                }
+            }
+        }
+        .task(id: partnerName) {
+            // Load anniversaries when view appears or when partner changes
+            guard partnerName != nil, let onLoadAnniversaries else { return }
+            isLoadingAnniversaries = true
+            do {
+                let result = try await onLoadAnniversaries()
+                await MainActor.run {
+                    togetherSinceDate = result.togetherSince
+                    customAnniversaries = result.customAnniversaries
+                    isLoadingAnniversaries = false
+                }
+            } catch {
+                print("Failed to load anniversaries: \(error)")
+                await MainActor.run {
+                    isLoadingAnniversaries = false
                 }
             }
         }
@@ -190,6 +235,96 @@ struct ProfileView: View {
                                 onJoinPartner?(code)
                             })
             .id(ScrollTarget.joinCard.rawValue)
+        }
+    }
+
+    private var anniversarySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("anniversaries")
+                    .font(.system(.title2, weight: .semibold))
+                    .foregroundStyle(primaryTextColor)
+
+                Spacer()
+
+                Button(action: { showAddAnniversary = true }) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(isLightsOut ? Color.white.opacity(0.8) : theme.buttonFill)
+                }
+            }
+
+            // Together Since Card
+            if let togetherSince = togetherSinceDate {
+                let daysTogether = Calendar.current.dateComponents([.day], from: togetherSince, to: Date()).day ?? 0
+                AnniversaryCard(
+                    title: "together since",
+                    daysAgo: daysTogether,
+                    date: togetherSince,
+                    theme: theme,
+                    isLightsOut: isLightsOut,
+                    isPrimary: true
+                )
+            } else {
+                Button(action: { showAddAnniversary = true }) {
+                    HStack {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 20))
+                        Text("Set your 'together since' date")
+                            .font(.system(.body, weight: .medium))
+                    }
+                    .foregroundStyle(isLightsOut ? Color.white.opacity(0.7) : theme.textMuted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white.opacity(0.5))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .strokeBorder(isLightsOut ? Color.white.opacity(0.2) : theme.buttonFill.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            // Custom Anniversaries
+            ForEach(customAnniversaries) { anniversary in
+                AnniversaryCard(
+                    title: anniversary.name,
+                    daysAgo: anniversary.daysAgo,
+                    date: anniversary.date,
+                    theme: theme,
+                    isLightsOut: isLightsOut,
+                    isPrimary: false,
+                    onDelete: {
+                        guard let onDeleteCustomAnniversary else {
+                            customAnniversaries.removeAll { $0.id == anniversary.id }
+                            return
+                        }
+                        Task {
+                            do {
+                                try await onDeleteCustomAnniversary(anniversary.id)
+                                await MainActor.run {
+                                    customAnniversaries.removeAll { $0.id == anniversary.id }
+                                }
+                            } catch {
+                                print("Failed to delete anniversary: \(error)")
+                            }
+                        }
+                    }
+                )
+            }
+        }
+        .sheet(isPresented: $showAddAnniversary) {
+            AddAnniversarySheet(
+                togetherSinceDate: $togetherSinceDate,
+                customAnniversaries: $customAnniversaries,
+                theme: theme,
+                isLightsOut: isLightsOut,
+                onSetTogetherSince: onSetTogetherSince,
+                onAddCustomAnniversary: onAddCustomAnniversary
+            )
         }
     }
 
@@ -505,5 +640,263 @@ private struct PartnerStatusCard: View {
             RoundedRectangle(cornerRadius: 32, style: .continuous)
                 .fill(Color.white.opacity(isLightsOut ? 0.2 : 0.95))
         )
+    }
+}
+
+// MARK: - Anniversary Components
+
+private struct AnniversaryCard: View {
+    let title: String
+    let daysAgo: Int
+    let date: Date
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let isPrimary: Bool
+    var onDelete: (() -> Void)? = nil
+
+    private var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter.string(from: date)
+    }
+
+    private var circleColor: Color {
+        if isPrimary {
+            return isLightsOut ? Color.pink.opacity(0.3) : Color.pink.opacity(0.2)
+        } else {
+            return isLightsOut ? Color.white.opacity(0.2) : Color.purple.opacity(0.15)
+        }
+    }
+
+    private var iconColor: Color {
+        if isPrimary {
+            return isLightsOut ? Color.pink.opacity(0.9) : Color.pink
+        } else {
+            return isLightsOut ? Color.white.opacity(0.8) : Color.purple
+        }
+    }
+
+    private var accentColor: Color {
+        if isPrimary {
+            return isLightsOut ? Color.pink.opacity(0.9) : Color.pink
+        } else {
+            return isLightsOut ? Color.white.opacity(0.7) : theme.textMuted
+        }
+    }
+
+    private var borderColor: Color {
+        if isPrimary {
+            return isLightsOut ? Color.pink.opacity(0.3) : Color.pink.opacity(0.2)
+        } else {
+            return isLightsOut ? Color.white.opacity(0.2) : Color.gray.opacity(0.2)
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(circleColor)
+                    .frame(width: 56, height: 56)
+
+                Image(systemName: isPrimary ? "heart.fill" : "star.fill")
+                    .font(.system(size: 24))
+                    .foregroundStyle(iconColor)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(.body, weight: .semibold))
+                    .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
+
+                Text("\(daysAgo) days together")
+                    .font(.system(.headline, weight: .bold))
+                    .foregroundStyle(accentColor)
+
+                Text(formattedDate)
+                    .font(.system(.caption, weight: .medium))
+                    .foregroundStyle(isLightsOut ? Color.white.opacity(0.6) : theme.textMuted.opacity(0.8))
+            }
+
+            Spacer()
+
+            if let onDelete = onDelete {
+                Button(action: onDelete) {
+                    Image(systemName: "trash.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(isLightsOut ? Color.white.opacity(0.6) : theme.textMuted)
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white.opacity(0.7))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(borderColor, lineWidth: 1.5)
+                )
+        )
+    }
+}
+
+private struct AddAnniversarySheet: View {
+    @Binding var togetherSinceDate: Date?
+    @Binding var customAnniversaries: [Anniversary]
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let onSetTogetherSince: ((Date) async throws -> Void)?
+    let onAddCustomAnniversary: ((String, Date) async throws -> Anniversary)?
+
+    @Environment(\.dismiss) var dismiss
+    @State private var anniversaryName: String = ""
+    @State private var selectedDate: Date = Date()
+    @State private var isSettingTogetherSince: Bool = true
+    @State private var isSaving = false
+
+    var body: some View {
+        NavigationView {
+            ZStack {
+                (isLightsOut ? Color.black : Color(red: 0.996, green: 0.909, blue: 0.749))
+                    .ignoresSafeArea()
+
+                VStack(alignment: .leading, spacing: 24) {
+                    // Type Picker
+                    Picker("Type", selection: $isSettingTogetherSince) {
+                        Text("Together Since").tag(true)
+                        Text("Custom Anniversary").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 24)
+
+                    // Name Field (only for custom)
+                    if !isSettingTogetherSince {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Name")
+                                .font(.system(.subheadline, weight: .semibold))
+                                .foregroundStyle(isLightsOut ? Color.white.opacity(0.8) : theme.textMuted)
+
+                            TextField("First date, first kiss, etc.", text: $anniversaryName)
+                                .padding(16)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white)
+                                )
+                                .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
+                        }
+                        .padding(.horizontal, 24)
+                    }
+
+                    // Date Picker
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Date")
+                            .font(.system(.subheadline, weight: .semibold))
+                            .foregroundStyle(isLightsOut ? Color.white.opacity(0.8) : theme.textMuted)
+
+                        DatePicker("", selection: $selectedDate, displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                            .padding()
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white)
+                            )
+                    }
+                    .padding(.horizontal, 24)
+
+                    Spacer()
+
+                    // Save Button
+                    Button(action: saveAnniversary) {
+                        if isSaving {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                        } else {
+                            Text("Save")
+                                .font(.system(.headline, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(isLightsOut ? Color.pink.opacity(0.8) : Color.pink)
+                    )
+                    .disabled(isSaving || (isSettingTogetherSince == false && anniversaryName.isEmpty))
+                    .opacity((isSaving || (isSettingTogetherSince == false && anniversaryName.isEmpty)) ? 0.5 : 1)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 32)
+                }
+                .padding(.top, 20)
+            }
+            .navigationTitle("Add Anniversary")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundStyle(isLightsOut ? Color.white : theme.buttonFill)
+                }
+            }
+        }
+    }
+
+    private func saveAnniversary() {
+        isSaving = true
+
+        if isSettingTogetherSince {
+            // Setting together since date
+            if let onSetTogetherSince {
+                Task {
+                    do {
+                        try await onSetTogetherSince(selectedDate)
+                        await MainActor.run {
+                            togetherSinceDate = selectedDate
+                            isSaving = false
+                            dismiss()
+                        }
+                    } catch {
+                        print("Failed to set together since date: \(error)")
+                        await MainActor.run {
+                            isSaving = false
+                        }
+                    }
+                }
+            } else {
+                togetherSinceDate = selectedDate
+                isSaving = false
+                dismiss()
+            }
+        } else if !anniversaryName.isEmpty {
+            // Adding custom anniversary
+            if let onAddCustomAnniversary {
+                Task {
+                    do {
+                        let newAnniversary = try await onAddCustomAnniversary(anniversaryName, selectedDate)
+                        await MainActor.run {
+                            customAnniversaries.append(newAnniversary)
+                            isSaving = false
+                            dismiss()
+                        }
+                    } catch {
+                        print("Failed to add custom anniversary: \(error)")
+                        await MainActor.run {
+                            isSaving = false
+                        }
+                    }
+                }
+            } else {
+                let newAnniversary = Anniversary(name: anniversaryName, date: selectedDate)
+                customAnniversaries.append(newAnniversary)
+                isSaving = false
+                dismiss()
+            }
+        } else {
+            isSaving = false
+        }
     }
 }

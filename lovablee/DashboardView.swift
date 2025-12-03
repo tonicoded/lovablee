@@ -35,6 +35,10 @@ struct DashboardView: View {
     var loadGifts: (() async throws -> [PurchasedGift])? = nil
     var userEmail: String?
     var onRefreshPairing: (() -> Void)? = nil
+    var onLoadAnniversaries: (() async throws -> (togetherSince: Date?, customAnniversaries: [Anniversary]))? = nil
+    var onSetTogetherSince: ((Date) async throws -> Void)? = nil
+    var onAddCustomAnniversary: ((String, Date) async throws -> Anniversary)? = nil
+    var onDeleteCustomAnniversary: ((UUID) async throws -> Void)? = nil
     @State private var activeTab: DashboardNavTab = .home
     @State private var keyboardHeight: CGFloat = 0
     @State private var isPetSheetPresented = false
@@ -202,7 +206,11 @@ struct DashboardView: View {
                                 onDeleteAccount: onDeleteAccount,
                                 onSettings: { showSettings = true },
                                 onRefreshPairing: onRefreshPairing,
-                                onUploadPhoto: onUploadPhoto)
+                                onUploadPhoto: onUploadPhoto,
+                                onLoadAnniversaries: onLoadAnniversaries,
+                                onSetTogetherSince: onSetTogetherSince,
+                                onAddCustomAnniversary: onAddCustomAnniversary,
+                                onDeleteCustomAnniversary: onDeleteCustomAnniversary)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                         .onAppear {
                             onRefreshPairing?()

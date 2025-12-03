@@ -162,7 +162,19 @@ struct ContentView: View {
                                   try await loadGiftsFromServer()
                               },
                               userEmail: userRecord?.email,
-                              onRefreshPairing: { ensureLatestUserRecordIfMissing(force: true) })
+                              onRefreshPairing: { ensureLatestUserRecordIfMissing(force: true) },
+                              onLoadAnniversaries: {
+                                  try await loadAnniversaries()
+                              },
+                              onSetTogetherSince: { date in
+                                  try await setTogetherSince(date: date)
+                              },
+                              onAddCustomAnniversary: { name, date in
+                                  try await addCustomAnniversary(name: name, date: date)
+                              },
+                              onDeleteCustomAnniversary: { id in
+                                  try await deleteCustomAnniversary(id: id)
+                              })
                 .onAppear {
                     ensureLatestUserRecordIfMissing()
                     startProfileAutoRefresh()
@@ -472,6 +484,30 @@ struct ContentView: View {
     private func markGiftAsOpened(giftId: UUID) async throws {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.markGiftAsOpened(session: session, giftId: giftId)
+        }
+    }
+
+    private func loadAnniversaries() async throws -> (togetherSince: Date?, customAnniversaries: [Anniversary]) {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.loadAnniversaries(session: session)
+        }
+    }
+
+    private func setTogetherSince(date: Date) async throws {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.setTogetherSince(session: session, date: date)
+        }
+    }
+
+    private func addCustomAnniversary(name: String, date: Date) async throws -> Anniversary {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.addCustomAnniversary(session: session, name: name, date: date)
+        }
+    }
+
+    private func deleteCustomAnniversary(id: UUID) async throws {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.deleteCustomAnniversary(session: session, id: id)
         }
     }
 
@@ -2620,6 +2656,100 @@ private final class SupabaseAuthService {
         _ = try validateResponse(data, response)
     }
 
+    func loadAnniversaries(session: SupabaseSession) async throws -> (togetherSince: Date?, customAnniversaries: [Anniversary]) {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/load_anniversaries"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = "{}".data(using: .utf8)
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        guard let result = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let first = result.first else {
+            return (nil, [])
+        }
+
+        let togetherSince: Date? = {
+            guard let dateString = first["together_since"] as? String else { return nil }
+            return ISO8601DateFormatter().date(from: dateString)
+        }()
+
+        let customAnniversaries: [Anniversary] = {
+            guard let customJSON = first["custom_anniversaries"] as? [[String: Any]] else { return [] }
+            return customJSON.compactMap { dict in
+                guard let idString = dict["id"] as? String,
+                      let id = UUID(uuidString: idString),
+                      let name = dict["name"] as? String,
+                      let dateString = dict["date"] as? String,
+                      let date = ISO8601DateFormatter().date(from: dateString) else {
+                    return nil
+                }
+                return Anniversary(id: id, name: name, date: date)
+            }
+        }()
+
+        return (togetherSince, customAnniversaries)
+    }
+
+    func setTogetherSince(session: SupabaseSession, date: Date) async throws {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/set_together_since"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let dateString = ISO8601DateFormatter().string(from: date)
+        let payload: [String: Any] = ["p_date": dateString]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+    }
+
+    func addCustomAnniversary(session: SupabaseSession, name: String, date: Date) async throws -> Anniversary {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/add_custom_anniversary"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let dateString = ISO8601DateFormatter().string(from: date)
+        let payload: [String: Any] = ["p_name": name, "p_date": dateString]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        guard let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let idString = dict["id"] as? String,
+              let id = UUID(uuidString: idString),
+              let returnedName = dict["name"] as? String,
+              let dateString = dict["anniversary_date"] as? String,
+              let returnedDate = ISO8601DateFormatter().date(from: dateString) else {
+            throw SupabaseAuthError.server("Failed to decode anniversary response")
+        }
+
+        return Anniversary(id: id, name: returnedName, date: returnedDate)
+    }
+
+    func deleteCustomAnniversary(session: SupabaseSession, id: UUID) async throws {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/custom_anniversaries"))
+        request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("id=eq.\(id.uuidString)", forHTTPHeaderField: "Prefer")
+
+        var components = URLComponents(url: projectURL.appendingPathComponent("rest/v1/custom_anniversaries"), resolvingAgainstBaseURL: false)
+        components?.queryItems = [URLQueryItem(name: "id", value: "eq.\(id.uuidString)")]
+        guard let url = components?.url else { throw SupabaseAuthError.server("Invalid URL for delete request") }
+        request.url = url
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+    }
+
     func uploadProfileImage(session: SupabaseSession, imageData: Data) async throws -> String {
         let path = "storage/v1/object/\(storageBucketPath)/profiles/\(session.user.id).jpg"
         var request = URLRequest(url: projectURL.appendingPathComponent(path))
@@ -3016,9 +3146,9 @@ struct DecorPlacement {
     var windowY: CGFloat = Layout.windowY
     var heroXOffset: CGFloat = Layout.heroXOffset
     var heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor
-    var giftWidth: CGFloat = 80
-    var giftXOffset: CGFloat = -120
-    var giftY: CGFloat = 380
+    var giftWidth: CGFloat = 180
+    var giftXOffset: CGFloat = 120
+    var giftY: CGFloat = 55
 }
 
 extension DecorPlacement {
