@@ -108,6 +108,7 @@ async function sendApnsPush({ deviceToken, title, body, payload }: ApnsPayload):
         body,
       },
       sound: "default",
+      "content-available": 1,
     },
   };
 

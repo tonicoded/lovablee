@@ -1,7 +1,9 @@
 import SwiftUI
 import UIKit
+import PencilKit
 import Combine
 import Lottie
+import WidgetKit
 
 struct DashboardView: View {
     let name: String
@@ -27,12 +29,17 @@ struct DashboardView: View {
     var onRenamePet: ((String) async throws -> Void)? = nil
     var onSendLoveNote: ((String) async throws -> Void)? = nil
     var loadLoveNotes: (() async throws -> [LoveNote])? = nil
+    var onSaveDoodle: ((UIImage) async throws -> Void)? = nil
+    var loadDoodles: (() async throws -> [Doodle])? = nil
     var userEmail: String?
     var onRefreshPairing: (() -> Void)? = nil
     @State private var activeTab: DashboardNavTab = .home
     @State private var keyboardHeight: CGFloat = 0
     @State private var isPetSheetPresented = false
     @State private var isLoveNoteSheetPresented = false
+    @State private var isLoveboxInboxPresented = false
+    @State private var isDoodleSheetPresented = false
+    @State private var isDoodleGalleryPresented = false
     @State private var petStatus: SupabasePetStatus?
     @State private var isPetStatusLoading = false
     @State private var isPerformingPetAction = false
@@ -47,10 +54,13 @@ struct DashboardView: View {
     @State private var statusRefreshTimer: AnyCancellable?
     @State private var activityItems: [SupabaseActivityItem] = []
     @State private var loveNotes: [LoveNote] = []
+    @State private var doodles: [Doodle] = []
     @State private var isActivityLoading = false
     @State private var isLoveNotesLoading = false
+    @State private var isDoodlesLoading = false
     @State private var activityRefreshTimer: AnyCancellable?
     @State private var showSettings = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         GeometryReader { geo in
@@ -90,7 +100,10 @@ struct DashboardView: View {
                                         triggerPetShortcut(.play)
                                    },
                                    loveboxAction: {
-                                        isLoveNoteSheetPresented = true
+                                        isLoveboxInboxPresented = true
+                                   },
+                                   galleryAction: {
+                                        isDoodleGalleryPresented = true
                                    },
                                    waterEnabled: waterReady,
                                    playEnabled: playReady,
@@ -169,9 +182,7 @@ struct DashboardView: View {
                                      isLightsOut: isLightsOut,
                                      safeAreaInsets: stableInsets,
                                      items: activityItems,
-                                     loveNotes: loveNotes,
                                      isLoading: isActivityLoading,
-                                     isLoveNotesLoading: isLoveNotesLoading,
                                      userId: userIdentifier,
                                      userName: name,
                                      partnerName: partnerName,
@@ -179,7 +190,6 @@ struct DashboardView: View {
                                      partnerPhotoURL: partnerProfileImageURL,
                                      onRefresh: {
                                          refreshActivity(force: true)
-                                         refreshLoveNotes(force: true)
                                      })
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
@@ -213,12 +223,17 @@ struct DashboardView: View {
                 }
 
                 if let activePetAction, !isPetSheetPresented {
-                    PetActionProgressOverlay(action: activePetAction,
-                                             theme: theme,
-                                             isLightsOut: isLightsOut,
-                                             petName: petStatus?.petName ?? "Bubba")
-                        .transition(.opacity)
-                        .zIndex(2)
+                    PetActionProgressOverlay(
+                        action: activePetAction,
+                        theme: theme,
+                        isLightsOut: isLightsOut,
+                        petName: petStatus?.petName ?? "Bubba",
+                        onComplete: {
+                            await completePetAction(activePetAction)
+                        }
+                    )
+                    .transition(.opacity)
+                    .zIndex(2)
                 }
             }
             .ignoresSafeArea(edges: [.top, .bottom])
@@ -232,11 +247,80 @@ struct DashboardView: View {
                                   Task {
                                       do {
                                           try await onSendLoveNote?(message)
+                                          await MainActor.run {
+                                              refreshLoveNotes(force: true)
+                                          }
                                       } catch {
                                           print("Error sending love note: \(error)")
                                       }
                                   }
                               })
+            }
+            .fullScreenCover(isPresented: $isLoveboxInboxPresented) {
+                LoveboxInboxView(
+                    theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
+                    isLightsOut: isLightsOut,
+                    safeAreaInsets: stableInsets,
+                    loveNotes: loveNotes,
+                    isLoading: isLoveNotesLoading,
+                    userId: userIdentifier,
+                    onClose: {
+                        isLoveboxInboxPresented = false
+                    },
+                    onRefresh: {
+                        refreshLoveNotes(force: true)
+                    },
+                    onCompose: {
+                        isLoveboxInboxPresented = false
+                        isLoveNoteSheetPresented = true
+                    }
+                )
+                .onAppear {
+                    refreshLoveNotes(force: true)
+                }
+            }
+            .sheet(isPresented: $isDoodleSheetPresented) {
+                DoodleCanvasView(theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
+                                isLightsOut: isLightsOut,
+                                userName: name,
+                                onSave: { image in
+                                    Task {
+                                        do {
+                                            print("🎨 Starting doodle save...")
+                                            try await onSaveDoodle?(image)
+                                            print("🎨 Doodle saved successfully!")
+                                            await MainActor.run {
+                                                refreshDoodles(force: true)
+                                            }
+                                        } catch {
+                                            print("❌ Error saving doodle: \(error)")
+                                            print("❌ Error details: \(error.localizedDescription)")
+                                        }
+                                    }
+                                })
+            }
+            .fullScreenCover(isPresented: $isDoodleGalleryPresented) {
+                DoodleGalleryView(
+                    theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
+                    isLightsOut: isLightsOut,
+                    safeAreaInsets: stableInsets,
+                    doodles: doodles,
+                    isLoading: isDoodlesLoading,
+                    userId: userIdentifier,
+                    onClose: {
+                        isDoodleGalleryPresented = false
+                    },
+                    onRefresh: {
+                        refreshDoodles(force: true)
+                    },
+                    onDrawNew: {
+                        isDoodleGalleryPresented = false
+                        isDoodleSheetPresented = true
+                    }
+                )
+                .onAppear {
+                    refreshDoodles(force: true)
+                }
             }
             .fullScreenCover(isPresented: $isPetSheetPresented) {
                 ZStack {
@@ -258,10 +342,15 @@ struct DashboardView: View {
                     PetActionProgressOverlay(action: activePetAction,
                                              theme: theme,
                                              isLightsOut: isLightsOut,
-                                             petName: petStatus?.petName ?? "Bubba")
-                            .transition(.opacity)
-                            .zIndex(1)
-                    }
+                                             petName: petStatus?.petName ?? "Bubba",
+                                             onComplete: {
+                                                 await completePetAction(activePetAction)
+                                             }
+                                         )
+                                         .transition(.opacity)
+                                         .zIndex(2)
+                                     }
+                                 
 
                     if let rewardNotice {
                         RewardCelebrationView(notice: rewardNotice,
@@ -300,6 +389,10 @@ struct DashboardView: View {
         }
         .onAppear {
             refreshPetStatus()
+            // Update widget with existing doodle data immediately
+            updateWidgetWithLatestDoodle()
+            // Then refresh doodles in background
+            refreshDoodles(force: true)
             startStatusTimer()
             startActivityTimer()
         }
@@ -312,7 +405,14 @@ struct DashboardView: View {
         .onChange(of: activeTab) { _, newValue in
             if newValue == .activity {
                 refreshActivity(force: activityItems.isEmpty)
-                refreshLoveNotes(force: loveNotes.isEmpty)
+            }
+        }
+        .onChange(of: scenePhase) { oldPhase, newPhase in
+            if oldPhase == .background && newPhase == .active {
+                // App came to foreground - refresh doodles for widget
+                print("🎨 App came to foreground - refreshing doodles for widget")
+                updateWidgetWithLatestDoodle()
+                refreshDoodles(force: true)
             }
         }
     }
@@ -403,12 +503,109 @@ struct DashboardView: View {
         }
     }
 
+    private func refreshDoodles(force: Bool = false) {
+        guard let loader = loadDoodles else { return }
+        if isDoodlesLoading && !force { return }
+        isDoodlesLoading = true
+        Task {
+            do {
+                let fetchedDoodles = try await loader()
+                await MainActor.run {
+                    self.doodles = fetchedDoodles
+                    self.isDoodlesLoading = false
+
+                    // Save latest partner doodle for widget
+                    if let latestPartnerDoodle = fetchedDoodles.first(where: { $0.senderId != userIdentifier }) {
+                        Task {
+                            await saveLatestDoodleForWidget(doodle: latestPartnerDoodle)
+                        }
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isDoodlesLoading = false
+                }
+            }
+        }
+    }
+
+    private func updateWidgetWithLatestDoodle() {
+        // Immediately update widget with existing doodle data if available
+        guard let latestPartnerDoodle = doodles.first(where: { $0.senderId != userIdentifier }) else {
+            print("🎨 No partner doodle available yet for widget")
+            return
+        }
+
+        Task {
+            await saveLatestDoodleForWidget(doodle: latestPartnerDoodle)
+            print("🎨 Widget updated with existing doodle data")
+        }
+    }
+
+    private func saveLatestDoodleForWidget(doodle: Doodle) async {
+        // Try to decode from base64 content first
+        if let content = doodle.content {
+            var payload = content
+            // Remove data:image/png;base64, prefix if present
+            if let comma = content.firstIndex(of: ",") {
+                payload = String(content[content.index(after: comma)...])
+            }
+
+            guard let imageData = Data(base64Encoded: payload) else {
+                print("Failed to decode doodle base64 for widget")
+                return
+            }
+
+            WidgetDataStore.shared.saveLatestDoodle(
+                imageData: imageData,
+                partnerName: doodle.senderName
+            )
+            return
+        }
+
+        // Fallback to storage path (for old doodles)
+        if let storagePath = doodle.storagePath,
+           let imageURL = URL(string: "https://ahtkqcaxeycxvwntjcxp.supabase.co/storage/v1/object/public/storage/\(storagePath)") {
+            do {
+                let (imageData, _) = try await URLSession.shared.data(from: imageURL)
+                WidgetDataStore.shared.saveLatestDoodle(
+                    imageData: imageData,
+                    partnerName: doodle.senderName
+                )
+            } catch {
+                print("Failed to download doodle for widget: \(error)")
+            }
+        }
+    }
+
     private func triggerPetShortcut(_ action: PetActionType) {
         guard performPetAction != nil else {
             openPetSheet()
             return
         }
         guard !isPerformingPetAction else { return }
+
+        // Check cooldown before allowing action
+        if let status = petStatus {
+            let now = Date()
+            switch action {
+            case .water:
+                if let lastWatered = status.lastWateredAt,
+                   now.timeIntervalSince(lastWatered) < 3600 { // 1 hour
+                    onPetAlert?("Still hydrated", "Wait a bit before watering \(status.petName) again!")
+                    return
+                }
+            case .play:
+                if let lastPlayed = status.lastPlayedAt,
+                   now.timeIntervalSince(lastPlayed) < 900 { // 15 minutes
+                    onPetAlert?("Still energized", "Wait a bit before playing with \(status.petName) again!")
+                    return
+                }
+            case .note, .doodle:
+                break // Not used in shortcuts for pet actions
+            }
+        }
+
         if !isPetSheetPresented {
             isPetSheetPresented = true
             refreshPetStatus(force: true)
@@ -420,65 +617,71 @@ struct DashboardView: View {
     }
 
     private func handlePetAction(_ action: PetActionType) {
-        guard let performer = performPetAction else { return }
         guard !isPerformingPetAction else { return }
+
         isPerformingPetAction = true
         activePetAction = action
-        Task {
-            do {
-                let previousHearts = petStatus?.hearts ?? 0
-                let previousStreak = petStatus?.streakCount ?? 0
-                let status = try await performer(action)
-                let stamped = SupabasePetStatus(
-                    userId: status.userId,
-                    petName: status.petName,
-                    mood: status.mood,
-                    hydrationLevel: status.hydrationLevel,
-                    playfulnessLevel: status.playfulnessLevel,
-                    hearts: status.hearts,
-                    streakCount: status.streakCount,
-                    lastActiveDate: status.lastActiveDate,
-                    lastWateredAt: status.lastWateredAt,
-                    lastPlayedAt: status.lastPlayedAt,
-                    adoptedAt: status.adoptedAt,
-                    updatedAt: Date()
-                )
-                await MainActor.run {
-                    self.petStatus = stamped
-                    self.isPerformingPetAction = false
-                    self.animateCounters(to: stamped)
-                    let heartsEarned = max(0, stamped.hearts - previousHearts)
-                    let streakBumped = stamped.streakCount > previousStreak
-                    let shouldCelebrateStreak = streakBumped && shouldCelebrateCurrentStreak()
-                    let willShowReward = heartsEarned > 0 || shouldCelebrateStreak
-                    if willShowReward {
-                        hapticSuccess()
-                        self.pendingRewardNotice = PetRewardNotice(
-                            heartsEarned: heartsEarned,
-                            totalHearts: stamped.hearts,
-                            streakCount: stamped.streakCount,
-                            streakBumped: shouldCelebrateStreak,
-                            action: action
-                        )
-                        if shouldCelebrateStreak {
-                            lastStreakCelebrateDate = Date()
-                        }
+    }
+
+    private func completePetAction(_ action: PetActionType) async {
+        guard let performer = performPetAction else { return }
+
+        do {
+            let previousHearts = petStatus?.hearts ?? 0
+            let previousStreak = petStatus?.streakCount ?? 0
+            let status = try await performer(action)
+
+            let stamped = SupabasePetStatus(
+                userId: status.userId,
+                petName: status.petName,
+                mood: status.mood,
+                hydrationLevel: status.hydrationLevel,
+                playfulnessLevel: status.playfulnessLevel,
+                hearts: status.hearts,
+                streakCount: status.streakCount,
+                lastActiveDate: status.lastActiveDate,
+                lastWateredAt: status.lastWateredAt,
+                lastPlayedAt: status.lastPlayedAt,
+                adoptedAt: status.adoptedAt,
+                updatedAt: Date()
+            )
+
+            await MainActor.run {
+                self.petStatus = stamped
+                self.isPerformingPetAction = false
+                self.animateCounters(to: stamped)
+                let heartsEarned = max(0, stamped.hearts - previousHearts)
+                let streakBumped = stamped.streakCount > previousStreak
+                let shouldCelebrateStreak = streakBumped && shouldCelebrateCurrentStreak()
+                let willShowReward = heartsEarned > 0 || shouldCelebrateStreak
+                if willShowReward {
+                    hapticSuccess()
+                    self.pendingRewardNotice = PetRewardNotice(
+                        heartsEarned: heartsEarned,
+                        totalHearts: stamped.hearts,
+                        streakCount: stamped.streakCount,
+                        streakBumped: shouldCelebrateStreak,
+                        action: action
+                    )
+                    if shouldCelebrateStreak {
+                        lastStreakCelebrateDate = Date()
                     }
-                    self.refreshActivity(force: true)
                 }
-            } catch {
-                await MainActor.run {
-                    self.isPerformingPetAction = false
-                    self.onPetAlert?("Couldn't send that action", self.petActionFailureMessage(for: error))
-                    self.activePetAction = nil
+                self.refreshActivity(force: true)
+
+                // Wait a moment, then dismiss overlay and show reward
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        self.activePetAction = nil
+                        self.showPendingRewardIfNeeded()
+                    }
                 }
             }
-            let overlayHold: TimeInterval = 9.5
-            DispatchQueue.main.asyncAfter(deadline: .now() + overlayHold) {
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    self.activePetAction = nil
-                    self.showPendingRewardIfNeeded()
-                }
+        } catch {
+            await MainActor.run {
+                self.isPerformingPetAction = false
+                self.onPetAlert?("Couldn't send that action", self.petActionFailureMessage(for: error))
+                self.activePetAction = nil
             }
         }
     }
@@ -732,6 +935,9 @@ private struct PetLayoutTab: View {
         let onWater: () -> Void
         let onPlay: () -> Void
 
+        @State private var isWaterPressed = false
+        @State private var isPlayPressed = false
+
         var body: some View {
             ZStack {
                 Text("Our pet")
@@ -815,51 +1021,69 @@ private struct PetLayoutTab: View {
 
         private var actions: some View {
             HStack(spacing: PetLayout.actionSpacing) {
-                Button(action: {
+                VStack {
+                    Image(systemName: "drop.fill")
+                        .font(.system(size: 24))
+                    Text("Water")
+                        .font(.system(.subheadline, weight: .semibold))
+                    if let waterCooldownText {
+                        Text(waterCooldownText)
+                            .font(.caption2)
+                            .foregroundColor(theme.textMuted)
+                    }
+                }
+                .foregroundColor(theme.textPrimary)
+                .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
+                .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
+                .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
+                .scaleEffect(isWaterPressed ? 0.9 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isWaterPressed)
+                .opacity(waterCooldownText != nil ? 0.6 : 1)
+                .onTapGesture {
+                    guard waterCooldownText == nil else { return }
+                    withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
+                        isWaterPressed = true
+                    }
                     hapticExtreme()
                     onWater()
-                }) {
-                    VStack {
-                        Image(systemName: "drop.fill")
-                            .font(.system(size: 24))
-                        Text("Water")
-                            .font(.system(.subheadline, weight: .semibold))
-                        if let waterCooldownText {
-                            Text(waterCooldownText)
-                                .font(.caption2)
-                                .foregroundColor(theme.textMuted)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                            isWaterPressed = false
                         }
                     }
-                    .foregroundColor(theme.textPrimary)
-                    .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
-                    .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
-                    .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
                 }
-                .disabled(waterCooldownText != nil)
-                .opacity(waterCooldownText != nil ? 0.6 : 1)
 
-                Button(action: {
+                VStack {
+                    Image(systemName: "gamecontroller.fill")
+                        .font(.system(size: 24))
+                    Text("Play")
+                        .font(.system(.subheadline, weight: .semibold))
+                    if let playCooldownText {
+                        Text(playCooldownText)
+                            .font(.caption2)
+                            .foregroundColor(theme.textMuted)
+                    }
+                }
+                .foregroundColor(theme.textPrimary)
+                .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
+                .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
+                .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
+                .scaleEffect(isPlayPressed ? 0.9 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isPlayPressed)
+                .opacity(playCooldownText != nil ? 0.6 : 1)
+                .onTapGesture {
+                    guard playCooldownText == nil else { return }
+                    withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
+                        isPlayPressed = true
+                    }
                     hapticExtreme()
                     onPlay()
-                }) {
-                    VStack {
-                        Image(systemName: "gamecontroller.fill")
-                            .font(.system(size: 24))
-                        Text("Play")
-                            .font(.system(.subheadline, weight: .semibold))
-                        if let playCooldownText {
-                            Text(playCooldownText)
-                                .font(.caption2)
-                                .foregroundColor(theme.textMuted)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                            isPlayPressed = false
                         }
                     }
-                    .foregroundColor(theme.textPrimary)
-                    .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
-                    .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
-                    .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
                 }
-                .disabled(playCooldownText != nil)
-                .opacity(playCooldownText != nil ? 0.6 : 1)
             }
         }
 
@@ -1387,9 +1611,7 @@ private struct ActivityFeedView: View {
     let isLightsOut: Bool
     let safeAreaInsets: EdgeInsets
     let items: [SupabaseActivityItem]
-    let loveNotes: [LoveNote]
     let isLoading: Bool
-    let isLoveNotesLoading: Bool
     let userId: String?
     let userName: String
     let partnerName: String?
@@ -1435,7 +1657,7 @@ private struct ActivityFeedView: View {
                 }
                 .padding(.top, safeAreaInsets.top + 6)
 
-                if (isLoading || isLoveNotesLoading) && items.isEmpty && loveNotes.isEmpty {
+                if isLoading && items.isEmpty {
                     HStack {
                         ProgressView()
                             .tint(theme.textPrimary)
@@ -1445,76 +1667,23 @@ private struct ActivityFeedView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, 30)
-                } else if items.isEmpty && loveNotes.isEmpty {
+                } else if items.isEmpty {
                     emptyState
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 16) {
-                            // Love Notes Section
-                            if !loveNotes.isEmpty {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    HStack {
-                                        Image(systemName: "heart.text.square.fill")
-                                            .font(.system(size: 16, weight: .bold))
-                                            .foregroundColor(.pink.opacity(0.8))
-                                        Text("Love Notes")
-                                            .font(.system(size: 19, weight: .bold))
-                                            .foregroundColor(theme.textPrimary)
-                                        Text("(\(loveNotes.count))")
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundColor(theme.textMuted.opacity(0.6))
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 4)
-
-                                    ForEach(loveNotes) { note in
-                                        LoveNoteCard(note: note,
-                                                     theme: theme,
-                                                     isLightsOut: isLightsOut,
-                                                     currentUserId: userId ?? "")
-                                    }
-                                }
-                                .padding(.bottom, 8)
-
-                                // Divider between sections
-                                if !items.isEmpty {
-                                    Divider()
-                                        .background(theme.textMuted.opacity(0.3))
-                                        .padding(.vertical, 8)
-                                }
+                        LazyVStack(spacing: 12) {
+                            ForEach(items) { item in
+                                ActivityRow(item: item,
+                                            theme: theme,
+                                            isLightsOut: isLightsOut,
+                                            title: description(for: item),
+                                            timestamp: relativeDate(for: item.createdAt),
+                                            avatar: avatar(for: item),
+                                            accent: accent(for: item))
                             }
 
-                            // Activity Items Section
-                            if !items.isEmpty {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    HStack {
-                                        Image(systemName: "clock.fill")
-                                            .font(.system(size: 16, weight: .bold))
-                                            .foregroundColor(theme.buttonFill.opacity(0.9))
-                                        Text("Recent Activity")
-                                            .font(.system(size: 19, weight: .bold))
-                                            .foregroundColor(theme.textPrimary)
-                                        Text("(\(items.count))")
-                                            .font(.system(size: 15, weight: .semibold))
-                                            .foregroundColor(theme.textMuted.opacity(0.6))
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 4)
-
-                                    ForEach(items) { item in
-                                        ActivityRow(item: item,
-                                                    theme: theme,
-                                                    isLightsOut: isLightsOut,
-                                                    title: description(for: item),
-                                                    timestamp: relativeDate(for: item.createdAt),
-                                                    avatar: avatar(for: item),
-                                                    accent: accent(for: item))
-                                    }
-                                }
-                            }
-
-                            if isLoading || isLoveNotesLoading {
+                            if isLoading {
                                 ProgressView()
                                     .tint(theme.textPrimary)
                                     .padding(.vertical, 12)
@@ -1758,6 +1927,680 @@ private struct SettingsView: View {
                 onDeleteAccount?()
             }) {
                 SettingRow(title: "Delete account", subtitle: nil, systemImage: "trash", theme: theme, iconColor: .red, textColor: .red)
+            }
+        }
+    }
+}
+
+// MARK: - Lovebox Inbox View
+private struct LoveboxInboxView: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let safeAreaInsets: EdgeInsets
+    let loveNotes: [LoveNote]
+    let isLoading: Bool
+    let userId: String?
+    let onClose: () -> Void
+    let onRefresh: () -> Void
+    let onCompose: () -> Void
+
+    @State private var selectedTab: LoveboxTab = .unread
+
+    enum LoveboxTab {
+        case unread, received, sent, all
+    }
+
+    private var filteredNotes: [LoveNote] {
+        switch selectedTab {
+        case .unread:
+            return loveNotes.filter { !$0.isRead }
+        case .received:
+            return loveNotes.filter { $0.senderId != userId }
+        case .sent:
+            return loveNotes.filter { $0.senderId == userId }
+        case .all:
+            return loveNotes
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            backgroundGradient(isDark: isLightsOut)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Header with back button
+                ZStack {
+                    HStack {
+                        Text("Lovebox")
+                            .font(.system(.largeTitle, weight: .bold))
+                            .foregroundColor(theme.textPrimary)
+                    }
+
+                    HStack {
+                        Button(action: {
+                            hapticSoft()
+                            onClose()
+                        }) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(theme.textPrimary)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            hapticSoft()
+                            onCompose()
+                        }) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 24, weight: .semibold))
+                                .foregroundColor(theme.textPrimary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, safeAreaInsets.top + 16)
+                .padding(.bottom, 16)
+
+                // Tabs
+                HStack(spacing: 0) {
+                    TabButton(title: "Unread", isSelected: selectedTab == .unread) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .unread
+                        }
+                    }
+                    TabButton(title: "Received", isSelected: selectedTab == .received) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .received
+                        }
+                    }
+                    TabButton(title: "Sent", isSelected: selectedTab == .sent) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .sent
+                        }
+                    }
+                    TabButton(title: "All", isSelected: selectedTab == .all) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .all
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+
+                // Content
+                if isLoading && loveNotes.isEmpty {
+                    Spacer()
+                    HStack {
+                        ProgressView()
+                            .tint(theme.textPrimary)
+                        Text("Loading…")
+                            .foregroundColor(theme.textPrimary)
+                            .font(.system(.body, weight: .medium))
+                    }
+                    Spacer()
+                } else if filteredNotes.isEmpty {
+                    Spacer()
+                    emptyState
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(filteredNotes) { note in
+                                LoveNoteInboxCard(
+                                    note: note,
+                                    theme: theme,
+                                    isLightsOut: isLightsOut,
+                                    currentUserId: userId ?? ""
+                                )
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, safeAreaInsets.bottom + 80)
+                    }
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "envelope.open")
+                .font(.system(size: 64, weight: .light))
+                .foregroundColor(theme.textMuted.opacity(0.5))
+
+            Text(emptyStateTitle)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(theme.textPrimary)
+
+            Text("All caught up!")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundColor(theme.textMuted)
+        }
+        .padding(.horizontal, 40)
+    }
+
+    private var emptyStateTitle: String {
+        switch selectedTab {
+        case .unread: return "No unread letters"
+        case .received: return "No received letters"
+        case .sent: return "No sent letters"
+        case .all: return "No letters yet"
+        }
+    }
+
+    private struct TabButton: View {
+        let title: String
+        let isSelected: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: {
+                hapticSoft()
+                action()
+            }) {
+                Text(title)
+                    .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
+                    .foregroundColor(isSelected ? .black : .gray)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(isSelected ? Color.white : Color.clear)
+                    )
+            }
+        }
+    }
+}
+
+private struct LoveNoteInboxCard: View {
+    let note: LoveNote
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let currentUserId: String
+
+    private var isFromMe: Bool {
+        note.senderId == currentUserId
+    }
+
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: note.createdAt, relativeTo: Date())
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(isFromMe ? "To: \(note.senderName)" : "From: \(note.senderName)")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+
+                    Text(relativeTime)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(theme.textMuted.opacity(0.7))
+                }
+
+                Spacer()
+
+                if !note.isRead && !isFromMe {
+                    Circle()
+                        .fill(Color.pink.opacity(0.8))
+                        .frame(width: 10, height: 10)
+                }
+            }
+
+            Text(note.message)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(theme.textPrimary.opacity(0.9))
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isLightsOut ? Color.white.opacity(0.08) : Color.white)
+                .shadow(color: Color.black.opacity(isLightsOut ? 0.3 : 0.08), radius: 8, y: 4)
+        )
+    }
+}
+
+// MARK: - Doodle Gallery View
+private struct DoodleGalleryView: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let safeAreaInsets: EdgeInsets
+    let doodles: [Doodle]
+    let isLoading: Bool
+    let userId: String?
+    let onClose: () -> Void
+    let onRefresh: () -> Void
+    let onDrawNew: () -> Void
+
+    @State private var selectedTab: DoodleTab = .all
+    @State private var selectedDoodleForFullscreen: Doodle?
+
+    enum DoodleTab {
+        case all, received, sent
+    }
+
+    private var filteredDoodles: [Doodle] {
+        switch selectedTab {
+        case .all:
+            return doodles
+        case .received:
+            return doodles.filter { $0.senderId != userId }
+        case .sent:
+            return doodles.filter { $0.senderId == userId }
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            backgroundGradient(isDark: isLightsOut)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Header with back button
+                ZStack {
+                    HStack {
+                        Text("Gallery")
+                            .font(.system(.largeTitle, weight: .bold))
+                            .foregroundColor(theme.textPrimary)
+                    }
+
+                    HStack {
+                        Button(action: {
+                            hapticSoft()
+                            onClose()
+                        }) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundColor(theme.textPrimary)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            hapticSoft()
+                            onDrawNew()
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "paintbrush")
+                                    .font(.system(size: 16, weight: .semibold))
+                                Text("Draw")
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule(style: .continuous)
+                                    .fill(theme.buttonFill)
+                            )
+                            .foregroundColor(.white)
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, safeAreaInsets.top + 16)
+                .padding(.bottom, 16)
+
+                // Tabs
+                HStack(spacing: 0) {
+                    TabButton(title: "All", isSelected: selectedTab == .all) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .all
+                        }
+                    }
+                    TabButton(title: "Received", isSelected: selectedTab == .received) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .received
+                        }
+                    }
+                    TabButton(title: "Sent", isSelected: selectedTab == .sent) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedTab = .sent
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+
+                // Content
+                if isLoading && doodles.isEmpty {
+                    Spacer()
+                    HStack {
+                        ProgressView()
+                            .tint(theme.textPrimary)
+                        Text("Loading…")
+                            .foregroundColor(theme.textPrimary)
+                            .font(.system(.body, weight: .medium))
+                    }
+                    Spacer()
+                } else if filteredDoodles.isEmpty {
+                    Spacer()
+                    emptyState
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: [
+                            GridItem(.flexible(), spacing: 12),
+                            GridItem(.flexible(), spacing: 12)
+                        ], spacing: 12) {
+                            ForEach(filteredDoodles) { doodle in
+                                Button(action: {
+                                    hapticSoft()
+                                    selectedDoodleForFullscreen = doodle
+                                }) {
+                                    DoodleGridItem(doodle: doodle, theme: theme, isLightsOut: isLightsOut, currentUserId: userId ?? "")
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, safeAreaInsets.bottom + 80)
+                    }
+                }
+            }
+        }
+        .fullScreenCover(item: $selectedDoodleForFullscreen) { doodle in
+            DoodleFullscreenView(
+                doodle: doodle,
+                theme: theme,
+                isLightsOut: isLightsOut,
+                currentUserId: userId ?? "",
+                onClose: {
+                    selectedDoodleForFullscreen = nil
+                }
+            )
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 64, weight: .light))
+                .foregroundColor(theme.textMuted.opacity(0.5))
+
+            Text(emptyStateTitle)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(theme.textPrimary)
+
+            Text("Start creating memories!")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundColor(theme.textMuted)
+        }
+        .padding(.horizontal, 40)
+    }
+
+    private var emptyStateTitle: String {
+        switch selectedTab {
+        case .all: return "No doodles yet"
+        case .received: return "No received doodles"
+        case .sent: return "No sent doodles"
+        }
+    }
+
+    private struct TabButton: View {
+        let title: String
+        let isSelected: Bool
+        let action: () -> Void
+
+        var body: some View {
+            Button(action: {
+                hapticSoft()
+                action()
+            }) {
+                Text(title)
+                    .font(.system(size: 15, weight: isSelected ? .semibold : .regular))
+                    .foregroundColor(isSelected ? .black : .gray)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .fill(isSelected ? Color.white : Color.clear)
+                    )
+            }
+        }
+    }
+}
+
+private struct DoodleGridItem: View {
+    let doodle: Doodle
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let currentUserId: String
+
+    private var isFromMe: Bool {
+        doodle.senderId == currentUserId
+    }
+
+    private var doodleImage: UIImage? {
+        // Try to decode from base64 content first
+        if let content = doodle.content {
+            var payload = content
+            // Remove data:image/png;base64, prefix if present
+            if let comma = content.firstIndex(of: ",") {
+                payload = String(content[content.index(after: comma)...])
+            }
+
+            guard let imageData = Data(base64Encoded: payload),
+                  let uiImage = UIImage(data: imageData) else {
+                return nil
+            }
+            return uiImage
+        }
+
+        // No content available
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let image = doodleImage {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(height: 150)
+                    .clipped()
+                    .cornerRadius(12)
+            } else if doodle.storagePath != nil {
+                // Fallback for old storage-based doodles
+                let baseURL = "https://ahtkqcaxeycxvwntjcxp.supabase.co"
+                if let url = URL(string: "\(baseURL)/storage/v1/object/public/storage/\(doodle.storagePath!)") {
+                    AsyncImage(url: url) { phase in
+                        switch phase {
+                        case .empty:
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(height: 150)
+                                .overlay(
+                                    ProgressView()
+                                        .tint(theme.textPrimary)
+                                )
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 150)
+                                .clipped()
+                        case .failure:
+                            Rectangle()
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(height: 150)
+                                .overlay(
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundColor(theme.textMuted)
+                                )
+                        @unknown default:
+                            EmptyView()
+                        }
+                    }
+                    .cornerRadius(12)
+                }
+            } else {
+                Rectangle()
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(height: 150)
+                    .overlay(
+                        Image(systemName: "exclamationmark.triangle")
+                            .foregroundColor(theme.textMuted)
+                    )
+                    .cornerRadius(12)
+            }
+
+            HStack {
+                Text(isFromMe ? "You" : doodle.senderName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+
+                Spacer()
+
+                Image(systemName: isFromMe ? "paperplane.fill" : "paintbrush.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(isFromMe ? .blue.opacity(0.7) : .purple.opacity(0.7))
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isLightsOut ? Color.white.opacity(0.08) : Color.white)
+                .shadow(color: Color.black.opacity(isLightsOut ? 0.3 : 0.08), radius: 8, y: 4)
+        )
+    }
+}
+
+// MARK: - Doodle Fullscreen View
+private struct DoodleFullscreenView: View {
+    let doodle: Doodle
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let currentUserId: String
+    let onClose: () -> Void
+
+    private var isFromMe: Bool {
+        doodle.senderId == currentUserId
+    }
+
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: doodle.createdAt, relativeTo: Date())
+    }
+
+    private var doodleImage: UIImage? {
+        // Try to decode from base64 content first
+        if let content = doodle.content {
+            var payload = content
+            // Remove data:image/png;base64, prefix if present
+            if let comma = content.firstIndex(of: ",") {
+                payload = String(content[content.index(after: comma)...])
+            }
+
+            guard let imageData = Data(base64Encoded: payload),
+                  let uiImage = UIImage(data: imageData) else {
+                return nil
+            }
+            return uiImage
+        }
+        return nil
+    }
+
+    var body: some View {
+        ZStack {
+            // Background
+            Color.black
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // Header with close button and metadata
+                HStack(alignment: .center, spacing: 12) {
+                    Button(action: {
+                        hapticSoft()
+                        onClose()
+                    }) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.2))
+                            )
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Image(systemName: isFromMe ? "paperplane.fill" : "paintbrush.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(isFromMe ? .blue.opacity(0.8) : .purple.opacity(0.8))
+
+                            Text(isFromMe ? "You" : doodle.senderName)
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+
+                        Text(relativeTime)
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 60)
+                .padding(.bottom, 20)
+
+                // Doodle image - fullscreen
+                if let image = doodleImage {
+                    GeometryReader { geometry in
+                        Image(uiImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                    }
+                } else if doodle.storagePath != nil {
+                    // Fallback for old storage-based doodles
+                    let baseURL = "https://ahtkqcaxeycxvwntjcxp.supabase.co"
+                    if let url = URL(string: "\(baseURL)/storage/v1/object/public/storage/\(doodle.storagePath!)") {
+                        GeometryReader { geometry in
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .empty:
+                                    ProgressView()
+                                        .tint(.white)
+                                        .frame(width: geometry.size.width, height: geometry.size.height)
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fit)
+                                        .frame(width: geometry.size.width, height: geometry.size.height)
+                                case .failure:
+                                    VStack(spacing: 12) {
+                                        Image(systemName: "exclamationmark.triangle")
+                                            .font(.system(size: 40))
+                                        Text("Failed to load doodle")
+                                            .font(.system(size: 16))
+                                    }
+                                    .foregroundColor(.white.opacity(0.6))
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                                @unknown default:
+                                    EmptyView()
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 40))
+                        Text("Doodle not available")
+                            .font(.system(size: 16))
+                    }
+                    .foregroundColor(.white.opacity(0.6))
+                }
             }
         }
     }
@@ -2159,7 +3002,11 @@ private struct PetCareScreen: View {
                     PetActionProgressOverlay(action: activeAction,
                                              theme: theme,
                                              isLightsOut: isLightsOut,
-                                             petName: petName)
+                                             petName: petName,           onComplete: {
+                       
+                    }
+                )
+                    
                     .transition(.opacity)
             }
         }
@@ -2389,6 +3236,8 @@ private struct PetCareScreen: View {
             onGiveWater()
         case .play:
             onPlay()
+        case .note, .doodle:
+            break // Not used in PetCareScreen
         }
     }
 
@@ -2660,12 +3509,14 @@ private struct PetActionProgressOverlay: View {
     let theme: PaletteTheme
     let isLightsOut: Bool
     let petName: String
+    let onComplete: () async -> Void
 
     @State private var progress: Double = 0
-    @State private var progressTimer: Timer?
-    @State private var pulse = false
-    @State private var spin = false
-    @State private var ripple = false
+    @State private var tapCount = 0
+    @State private var bubbaScale: CGFloat = 1.0
+    @State private var isCompletingAction = false
+
+    private let totalTaps = 20
 
     private var accent: Color {
         action == .water
@@ -2697,6 +3548,8 @@ private struct PetActionProgressOverlay: View {
         switch action {
         case .water: return "water"
         case .play: return "paws"
+        case .note: return "water" // Fallback
+        case .doodle: return "paws" // Fallback
         }
     }
 
@@ -2741,6 +3594,18 @@ private struct PetActionProgressOverlay: View {
                                 scale: ActionLayout.playScale,
                                 offsetX: ActionLayout.playOffsetX,
                                 offsetY: ActionLayout.playOffsetY)
+        case .note:
+            return LottieConfig(name: "water",
+                                size: ActionLayout.waterSize,
+                                scale: ActionLayout.waterScale,
+                                offsetX: ActionLayout.waterOffsetX,
+                                offsetY: ActionLayout.waterOffsetY)
+        case .doodle:
+            return LottieConfig(name: "paws",
+                                size: ActionLayout.playSize,
+                                scale: ActionLayout.playScale,
+                                offsetX: ActionLayout.playOffsetX,
+                                offsetY: ActionLayout.playOffsetY)
         }
     }
 
@@ -2748,11 +3613,13 @@ private struct PetActionProgressOverlay: View {
         let base = referenceName
         switch progress {
         case ..<0.33:
-            return "settling in with a deep inhale..."
+            return "Tap \(base) to fill the bar!"
         case ..<0.66:
-            return "sending love across both devices..."
+            return "Keep tapping... \(base) loves it!"
+        case ..<1.0:
+            return "Almost there! Keep going!"
         default:
-            return "locking in the cozy vibe for \(base)."
+            return "\(base) is so happy!"
         }
     }
 
@@ -2806,30 +3673,10 @@ private struct PetActionProgressOverlay: View {
         }
         .onAppear {
             hapticSoft()
-            startProgress()
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
-                pulse.toggle()
-            }
-            withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
-                spin.toggle()
-            }
-            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
-                ripple.toggle()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                hapticLight()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
-                hapticSoft()
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 8.5) {
-                hapticSuccess()
-            }
         }
         .onDisappear {
-            progressTimer?.invalidate()
-            progressTimer = nil
             progress = 0
+            tapCount = 0
         }
     }
 
@@ -2855,39 +3702,6 @@ private struct PetActionProgressOverlay: View {
     @ViewBuilder
     private var animationStack: some View {
         ZStack {
-            Circle()
-                .fill(accent.opacity(isLightsOut ? 0.18 : 0.16))
-                .frame(width: 260, height: 260)
-                .blur(radius: 18)
-
-            Circle()
-                .stroke(
-                    AngularGradient(
-                        colors: [
-                            accent.opacity(0.85),
-                            Palette.sunGlow.opacity(0.6),
-                            accent.opacity(0.4)
-                        ],
-                        center: .center
-                    ),
-                    lineWidth: 8
-                )
-                .frame(width: 240, height: 240)
-                .rotationEffect(.degrees(spin ? 360 : 0))
-                .animation(.linear(duration: 8).repeatForever(autoreverses: false), value: spin)
-
-            Circle()
-                .stroke(accent.opacity(0.3), lineWidth: 2)
-                .frame(width: 200, height: 200)
-                .blur(radius: 6)
-                .scaleEffect(pulse ? 1.06 : 0.94)
-
-            Circle()
-                .stroke(accent.opacity(0.22), lineWidth: 3)
-                .frame(width: ripple ? 230 : 150, height: ripple ? 230 : 150)
-                .opacity(ripple ? 0.1 : 0.35)
-                .animation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true), value: ripple)
-
             LottieView(name: lottieConfig.name, loopMode: .loop)
                 .frame(width: lottieConfig.size, height: lottieConfig.size)
                 .scaleEffect(lottieConfig.scale, anchor: .center)
@@ -2897,100 +3711,39 @@ private struct PetActionProgressOverlay: View {
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: ActionLayout.heroSize, height: ActionLayout.heroSize)
+                .scaleEffect(bubbaScale)
                 .offset(x: ActionLayout.heroOffsetX, y: ActionLayout.heroOffsetY)
+                .onTapGesture {
+                    handleTap()
+                }
         }
         .frame(height: 260)
     }
 
-    private var waterAnimation: some View {
-        VStack(spacing: 10) {
-            Image("water")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 90, height: 90)
-                .offset(y: pulse ? 10 : -10)
-                .opacity(0.92)
-                .shadow(color: accent.opacity(0.4), radius: 12, y: 6)
+    private func handleTap() {
+        guard progress < 1, !isCompletingAction else { return }
 
-            HStack(spacing: 8) {
-                Image(systemName: "drop.fill")
-                    .font(.system(size: 26))
-                    .foregroundColor(accent.opacity(0.9))
-                    .offset(y: pulse ? -6 : 4)
-                Image(systemName: "heart.fill")
-                    .font(.system(size: 24))
-                    .foregroundColor(Palette.sunGlow.opacity(0.9))
-                    .offset(y: pulse ? 6 : -4)
-            }
-            .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: pulse)
+        tapCount += 1
+        progress = min(1.0, Double(tapCount) / Double(totalTaps))
 
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    LinearGradient(colors: [
-                        accent.opacity(0.35),
-                        Color.white.opacity(0.0)
-                    ], startPoint: .leading, endPoint: .trailing)
-                )
-                .frame(width: 120, height: 8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(accent.opacity(0.7))
-                        .frame(width: 60, height: 8)
-                        .offset(x: pulse ? 20 : -20)
-                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
-                )
+        // Haptic feedback
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        // Bubba bounce animation
+        withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) {
+            bubbaScale = 1.15
         }
-    }
-
-    private var playAnimation: some View {
-        VStack(spacing: 8) {
-            Image("toys")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 98, height: 98)
-                .scaleEffect(pulse ? 1.08 : 0.94)
-                .shadow(color: accent.opacity(0.35), radius: 12, y: 8)
-
-            HStack(spacing: 12) {
-                Image(systemName: "sparkles")
-                    .foregroundColor(accent)
-                Image(systemName: "heart.fill")
-                    .foregroundColor(Color(red: 1, green: 0.78, blue: 0.58))
-            }
-            .font(.system(size: 20))
-            .opacity(pulse ? 1 : 0.5)
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(
-                    LinearGradient(colors: [
-                        accent.opacity(0.4),
-                        Color.white.opacity(0.0)
-                    ], startPoint: .trailing, endPoint: .leading)
-                )
-                .frame(width: 120, height: 8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(accent.opacity(0.8))
-                        .frame(width: 60, height: 8)
-                        .offset(x: pulse ? -20 : 20)
-                        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
-                )
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6).delay(0.1)) {
+            bubbaScale = 1.0
         }
-        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: pulse)
-    }
 
-    private func startProgress() {
-        progress = 0
-        progressTimer?.invalidate()
-        let total: TimeInterval = 10
-        let step: TimeInterval = 0.2
-        var elapsed: TimeInterval = 0
-        progressTimer = Timer.scheduledTimer(withTimeInterval: step, repeats: true) { timer in
-            elapsed += step
-            let fraction = min(1, elapsed / total)
-            progress = fraction
-            if fraction >= 1 {
-                timer.invalidate()
-                progressTimer = nil
+        // Complete action when progress reaches 100%
+        if progress >= 1 && !isCompletingAction {
+            isCompletingAction = true
+            hapticSuccess()
+
+            Task {
+                await onComplete()
             }
         }
     }
@@ -3175,6 +3928,89 @@ private struct LoveNoteCard: View {
     }
 }
 
+private struct DoodleCard: View {
+    let doodle: Doodle
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let currentUserId: String
+
+    private var isFromMe: Bool {
+        doodle.senderId == currentUserId
+    }
+
+    private var relativeTime: String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: doodle.createdAt, relativeTo: Date())
+    }
+
+    private var imageURL: URL? {
+        let baseURL = "https://ahtkqcaxeycxvwntjcxp.supabase.co"
+        guard let storagePath = doodle.storagePath else { return nil }
+        return URL(string: "\(baseURL)/storage/v1/object/public/storage/\(storagePath)")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: isFromMe ? "paperplane.fill" : "paintbrush.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isFromMe ? .blue.opacity(0.8) : .purple.opacity(0.8))
+
+                Text(isFromMe ? "You" : doodle.senderName)
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(theme.textPrimary)
+
+                Spacer()
+
+                Text(relativeTime)
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(theme.textMuted.opacity(0.7))
+            }
+
+            if let url = imageURL {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .empty:
+                        ProgressView()
+                            .frame(height: 150)
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxHeight: 200)
+                            .cornerRadius(12)
+                    case .failure:
+                        VStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .font(.system(size: 24))
+                            Text("Failed to load doodle")
+                                .font(.system(size: 12))
+                        }
+                        .frame(height: 150)
+                        .foregroundColor(theme.textMuted)
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isFromMe
+                      ? Color.blue.opacity(isLightsOut ? 0.15 : 0.1)
+                      : Color.purple.opacity(isLightsOut ? 0.15 : 0.1))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(isFromMe
+                             ? Color.blue.opacity(0.3)
+                             : Color.purple.opacity(0.3), lineWidth: 1)
+        )
+    }
+}
+
 // Shared gradient for new pet layout
 private func backgroundGradient(isDark: Bool) -> LinearGradient {
     if isDark {
@@ -3248,16 +4084,3 @@ private struct LottieView: UIViewRepresentable {
                  onRenameCompleted: nil)
 }
 
-#Preview("Pet action overlay - water") {
-    PetActionProgressOverlay(action: .water,
-                             theme: Palette.lightTheme,
-                             isLightsOut: false,
-                             petName: "Bubba")
-}
-
-#Preview("Pet action overlay - play dark") {
-    PetActionProgressOverlay(action: .play,
-                             theme: Palette.darkTheme,
-                             isLightsOut: true,
-                             petName: "Bubba")
-}

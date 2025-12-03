@@ -155,6 +155,8 @@ create table if not exists public.pet_status (
     last_active_date date,
     last_watered_at timestamptz,
     last_played_at timestamptz,
+    last_note_sent_at timestamptz,
+    last_doodle_created_at timestamptz,
     adopted_at timestamptz not null default timezone('utc', now()),
     updated_at timestamptz not null default timezone('utc', now())
 );
@@ -887,6 +889,177 @@ end;
 $$;
 
 grant execute on function public.get_love_notes(integer) to authenticated;
+
+-- ============================================================================
+-- DOODLES FEATURE
+-- ============================================================================
+
+-- 1. Doodles table to store drawing metadata
+create table if not exists public.doodles (
+    id uuid primary key default gen_random_uuid(),
+    couple_key text not null,
+    sender_id uuid not null references public.users (id) on delete cascade,
+    sender_name text not null,
+    storage_path text,
+    content text,
+    is_viewed boolean not null default false,
+    created_at timestamptz not null default timezone('utc', now())
+);
+
+create index if not exists idx_doodles_couple_key on public.doodles (couple_key);
+create index if not exists idx_doodles_sender_id on public.doodles (sender_id);
+create index if not exists idx_doodles_created_at on public.doodles (created_at desc);
+
+alter table public.doodles enable row level security;
+
+drop policy if exists "Users can view doodles in their couple" on public.doodles;
+create policy "Users can view doodles in their couple"
+    on public.doodles for select using (
+        exists (
+            select 1
+            from public.users u
+            left join public.users partner on partner.id = u.partner_id
+            where u.id = auth.uid()
+              and couple_key = case
+                  when partner.pairing_code is null then u.pairing_code
+                  when u.pairing_code <= partner.pairing_code then u.pairing_code
+                  else partner.pairing_code
+              end
+        )
+    );
+
+drop policy if exists "Users can insert doodles" on public.doodles;
+create policy "Users can insert doodles"
+    on public.doodles for insert with check (
+        sender_id = auth.uid()
+        and exists (
+            select 1
+            from public.users u
+            left join public.users partner on partner.id = u.partner_id
+            where u.id = auth.uid()
+              and couple_key = case
+                  when partner.pairing_code is null then u.pairing_code
+                  when u.pairing_code <= partner.pairing_code then u.pairing_code
+                  else partner.pairing_code
+              end
+        )
+    );
+
+-- 2. Function to save a doodle with base64 content
+create or replace function public.save_doodle(
+    p_content text default null,
+    p_storage_path text default null
+)
+returns public.doodles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    partner_user_id uuid;
+    my_pairing_code text;
+    partner_pairing_code text;
+    v_couple_key text;
+    sender_display_name text;
+    new_doodle public.doodles%rowtype;
+begin
+    select partner_id, pairing_code, display_name
+    into partner_user_id, my_pairing_code, sender_display_name
+    from public.users where id = auth.uid();
+
+    if partner_user_id is null then
+        raise exception 'no_partner';
+    end if;
+
+    if partner_user_id = auth.uid() then
+        raise exception 'cannot_send_to_self';
+    end if;
+
+    select pairing_code into partner_pairing_code
+    from public.users where id = partner_user_id;
+
+    if partner_pairing_code is null then
+        v_couple_key := my_pairing_code;
+    elsif my_pairing_code is null then
+        v_couple_key := partner_pairing_code;
+    else
+        v_couple_key := case
+            when my_pairing_code <= partner_pairing_code then my_pairing_code
+            else partner_pairing_code
+        end;
+    end if;
+
+    insert into public.doodles (couple_key, sender_id, sender_name, storage_path, content)
+    values (v_couple_key, auth.uid(), coalesce(sender_display_name, 'Someone'), p_storage_path, p_content)
+    returning * into new_doodle;
+
+    -- Send push notification to partner
+    if partner_user_id is not null then
+        perform public.send_test_push(
+            partner_user_id,
+            '🎨 ' || coalesce(sender_display_name, 'Someone') || ' sent you a doodle',
+            'Check it out in the gallery!',
+            jsonb_build_object('type', 'doodle', 'doodle_id', new_doodle.id)
+        );
+    end if;
+
+    return new_doodle;
+end;
+$$;
+
+grant execute on function public.save_doodle(text, text) to authenticated;
+
+-- 3. Function to get doodles for the current user's couple
+create or replace function public.get_doodles(p_limit integer default 50)
+returns setof public.doodles
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    partner_user_id uuid;
+    my_pairing_code text;
+    partner_pairing_code text;
+    v_couple_key text;
+    safe_limit integer := greatest(1, coalesce(p_limit, 50));
+begin
+    select partner_id, pairing_code into partner_user_id, my_pairing_code
+    from public.users where id = auth.uid();
+
+    if partner_user_id = auth.uid() then
+        partner_user_id := null;
+    end if;
+
+    if partner_user_id is not null then
+        select pairing_code into partner_pairing_code
+        from public.users where id = partner_user_id;
+    end if;
+
+    if partner_pairing_code is null then
+        v_couple_key := my_pairing_code;
+    elsif my_pairing_code is null then
+        v_couple_key := partner_pairing_code;
+    else
+        v_couple_key := case
+            when my_pairing_code <= partner_pairing_code then my_pairing_code
+            else partner_pairing_code
+        end;
+    end if;
+
+    if v_couple_key is null then
+        return;
+    end if;
+
+    return query
+    select *
+    from public.doodles
+    where couple_key = v_couple_key
+    order by created_at desc
+    limit safe_limit;
+end;
+$$;
+
+grant execute on function public.get_doodles(integer) to authenticated;
 
 -- 3. Storage bucket + policies for profile photos
 insert into storage.buckets (id, name, public)

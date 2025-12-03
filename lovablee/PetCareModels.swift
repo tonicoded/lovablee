@@ -11,6 +11,8 @@ struct SupabasePetStatus: Codable {
     let lastActiveDate: Date?
     let lastWateredAt: Date?
     let lastPlayedAt: Date?
+    let lastNoteSentAt: Date?
+    let lastDoodleCreatedAt: Date?
     let adoptedAt: Date?
     let updatedAt: Date?
 
@@ -25,6 +27,8 @@ struct SupabasePetStatus: Codable {
         case lastActiveDate
         case lastWateredAt
         case lastPlayedAt
+        case lastNoteSentAt
+        case lastDoodleCreatedAt
         case adoptedAt
         case updatedAt
     }
@@ -39,6 +43,8 @@ struct SupabasePetStatus: Codable {
          lastActiveDate: Date? = nil,
          lastWateredAt: Date?,
          lastPlayedAt: Date?,
+         lastNoteSentAt: Date? = nil,
+         lastDoodleCreatedAt: Date? = nil,
          adoptedAt: Date?,
          updatedAt: Date?) {
         self.userId = userId
@@ -51,6 +57,8 @@ struct SupabasePetStatus: Codable {
         self.lastActiveDate = lastActiveDate
         self.lastWateredAt = lastWateredAt
         self.lastPlayedAt = lastPlayedAt
+        self.lastNoteSentAt = lastNoteSentAt
+        self.lastDoodleCreatedAt = lastDoodleCreatedAt
         self.adoptedAt = adoptedAt
         self.updatedAt = updatedAt
     }
@@ -71,6 +79,8 @@ struct SupabasePetStatus: Codable {
         }
         lastWateredAt = try container.decodeIfPresent(Date.self, forKey: .lastWateredAt)
         lastPlayedAt = try container.decodeIfPresent(Date.self, forKey: .lastPlayedAt)
+        lastNoteSentAt = try container.decodeIfPresent(Date.self, forKey: .lastNoteSentAt)
+        lastDoodleCreatedAt = try container.decodeIfPresent(Date.self, forKey: .lastDoodleCreatedAt)
         adoptedAt = try container.decodeIfPresent(Date.self, forKey: .adoptedAt)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
     }
@@ -79,6 +89,8 @@ struct SupabasePetStatus: Codable {
 enum PetActionType: String, Codable {
     case water
     case play
+    case note
+    case doodle
 }
 
 struct LoveNote: Codable, Identifiable {
@@ -97,6 +109,28 @@ struct LoveNote: Codable, Identifiable {
         case senderName
         case message
         case isRead
+        case createdAt
+    }
+}
+
+struct Doodle: Codable, Identifiable {
+    let id: UUID
+    let coupleKey: String
+    let senderId: String
+    let senderName: String
+    let storagePath: String?
+    let content: String?
+    let isViewed: Bool
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case coupleKey
+        case senderId
+        case senderName
+        case storagePath
+        case content
+        case isViewed
         case createdAt
     }
 }

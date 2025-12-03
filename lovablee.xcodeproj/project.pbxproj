@@ -8,9 +8,19 @@
 
 /* Begin PBXBuildFile section */
 		040279B42EDD9A73002A49F9 /* Lottie in Frameworks */ = {isa = PBXBuildFile; productRef = 040279B32EDD9A73002A49F9 /* Lottie */; };
+		0416C5152EDEE97B00479ED2 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0416C4F32EDEE93100479ED2 /* WidgetKit.framework */; };
+		0416C5162EDEE97B00479ED2 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0416C4F52EDEE93100479ED2 /* SwiftUI.framework */; };
+		0416C5212EDEE97C00479ED2 /* LovableeWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0416C5142EDEE97B00479ED2 /* LovableeWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		0416C51F2EDEE97C00479ED2 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 0459E8C92EDB15AF00AA65E6 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 0416C5132EDEE97B00479ED2;
+			remoteInfo = LovableeWidgetExtension;
+		};
 		0459E8DF2EDB15B000AA65E6 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 0459E8C92EDB15AF00AA65E6 /* Project object */;
@@ -27,13 +37,46 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		0416C50C2EDEE93200479ED2 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				0416C5212EDEE97C00479ED2 /* LovableeWidgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0416C4F32EDEE93100479ED2 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		0416C4F52EDEE93100479ED2 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		0416C5142EDEE97B00479ED2 /* LovableeWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LovableeWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		0416C5312EDEEA7900479ED2 /* LovableeWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LovableeWidgetExtension.entitlements; sourceTree = "<group>"; };
 		0459E8D12EDB15AF00AA65E6 /* lovablee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = lovablee.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0459E8DE2EDB15B000AA65E6 /* lovableeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = lovableeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0459E8E82EDB15B000AA65E6 /* lovableeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = lovableeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		0416C5252EDEE97C00479ED2 /* Exceptions for "LovableeWidget" folder in "LovableeWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				WidgetDataStore.swift,
+			);
+			target = 0416C5132EDEE97B00479ED2 /* LovableeWidgetExtension */;
+		};
+		0416C5302EDEEA5300479ED2 /* Exceptions for "lovablee" folder in "LovableeWidgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				WidgetDataStore.swift,
+			);
+			target = 0416C5132EDEE97B00479ED2 /* LovableeWidgetExtension */;
+		};
 		0459B2B22EDC4ABF001969F1 /* Exceptions for "lovablee" folder in "lovablee" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -44,10 +87,24 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		0416C4F72EDEE93100479ED2 /* LovableeWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = LovableeWidget;
+			sourceTree = "<group>";
+		};
+		0416C5172EDEE97B00479ED2 /* LovableeWidget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				0416C5252EDEE97C00479ED2 /* Exceptions for "LovableeWidget" folder in "LovableeWidgetExtension" target */,
+			);
+			path = LovableeWidget;
+			sourceTree = "<group>";
+		};
 		0459E8D32EDB15AF00AA65E6 /* lovablee */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
 				0459B2B22EDC4ABF001969F1 /* Exceptions for "lovablee" folder in "lovablee" target */,
+				0416C5302EDEEA5300479ED2 /* Exceptions for "lovablee" folder in "LovableeWidgetExtension" target */,
 			);
 			path = lovablee;
 			sourceTree = "<group>";
@@ -65,6 +122,15 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0416C5112EDEE97B00479ED2 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0416C5162EDEE97B00479ED2 /* SwiftUI.framework in Frameworks */,
+				0416C5152EDEE97B00479ED2 /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0459E8CE2EDB15AF00AA65E6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -93,6 +159,8 @@
 		040279B22EDD9A73002A49F9 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				0416C4F32EDEE93100479ED2 /* WidgetKit.framework */,
+				0416C4F52EDEE93100479ED2 /* SwiftUI.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -100,9 +168,12 @@
 		0459E8C82EDB15AF00AA65E6 = {
 			isa = PBXGroup;
 			children = (
+				0416C5312EDEEA7900479ED2 /* LovableeWidgetExtension.entitlements */,
 				0459E8D32EDB15AF00AA65E6 /* lovablee */,
 				0459E8E12EDB15B000AA65E6 /* lovableeTests */,
 				0459E8EB2EDB15B000AA65E6 /* lovableeUITests */,
+				0416C4F72EDEE93100479ED2 /* LovableeWidget */,
+				0416C5172EDEE97B00479ED2 /* LovableeWidget */,
 				040279B22EDD9A73002A49F9 /* Frameworks */,
 				0459E8D22EDB15AF00AA65E6 /* Products */,
 			);
@@ -114,6 +185,7 @@
 				0459E8D12EDB15AF00AA65E6 /* lovablee.app */,
 				0459E8DE2EDB15B000AA65E6 /* lovableeTests.xctest */,
 				0459E8E82EDB15B000AA65E6 /* lovableeUITests.xctest */,
+				0416C5142EDEE97B00479ED2 /* LovableeWidgetExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -121,6 +193,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		0416C5132EDEE97B00479ED2 /* LovableeWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 0416C5222EDEE97C00479ED2 /* Build configuration list for PBXNativeTarget "LovableeWidgetExtension" */;
+			buildPhases = (
+				0416C5102EDEE97B00479ED2 /* Sources */,
+				0416C5112EDEE97B00479ED2 /* Frameworks */,
+				0416C5122EDEE97B00479ED2 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				0416C5172EDEE97B00479ED2 /* LovableeWidget */,
+			);
+			name = LovableeWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = LovableeWidgetExtension;
+			productReference = 0416C5142EDEE97B00479ED2 /* LovableeWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		0459E8D02EDB15AF00AA65E6 /* lovablee */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 0459E8F22EDB15B000AA65E6 /* Build configuration list for PBXNativeTarget "lovablee" */;
@@ -128,10 +222,12 @@
 				0459E8CD2EDB15AF00AA65E6 /* Sources */,
 				0459E8CE2EDB15AF00AA65E6 /* Frameworks */,
 				0459E8CF2EDB15AF00AA65E6 /* Resources */,
+				0416C50C2EDEE93200479ED2 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				0416C5202EDEE97C00479ED2 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				0459E8D32EDB15AF00AA65E6 /* lovablee */,
@@ -200,6 +296,9 @@
 				LastSwiftUpdateCheck = 2610;
 				LastUpgradeCheck = 2610;
 				TargetAttributes = {
+					0416C5132EDEE97B00479ED2 = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
 					0459E8D02EDB15AF00AA65E6 = {
 						CreatedOnToolsVersion = 26.1.1;
 					};
@@ -233,11 +332,19 @@
 				0459E8D02EDB15AF00AA65E6 /* lovablee */,
 				0459E8DD2EDB15B000AA65E6 /* lovableeTests */,
 				0459E8E72EDB15B000AA65E6 /* lovableeUITests */,
+				0416C5132EDEE97B00479ED2 /* LovableeWidgetExtension */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0416C5122EDEE97B00479ED2 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0459E8CF2EDB15AF00AA65E6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -262,6 +369,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0416C5102EDEE97B00479ED2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0459E8CD2EDB15AF00AA65E6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -286,6 +400,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0416C5202EDEE97C00479ED2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 0416C5132EDEE97B00479ED2 /* LovableeWidgetExtension */;
+			targetProxy = 0416C51F2EDEE97C00479ED2 /* PBXContainerItemProxy */;
+		};
 		0459E8E02EDB15B000AA65E6 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 0459E8D02EDB15AF00AA65E6 /* lovablee */;
@@ -299,6 +418,73 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		0416C5232EDEE97C00479ED2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = LovableeWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6XQ6Q4DLD3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LovableeWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LovableeWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anthony.lovablee.LovableeWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		0416C5242EDEE97C00479ED2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = LovableeWidgetExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6XQ6Q4DLD3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = LovableeWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = LovableeWidget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.anthony.lovablee.LovableeWidget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		0459E8F02EDB15B000AA65E6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -438,6 +624,7 @@
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
@@ -486,6 +673,7 @@
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UILaunchScreen_Generation[sdk=iphonesimulator*]" = YES;
+				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphoneos*]" = UIStatusBarStyleDefault;
 				"INFOPLIST_KEY_UIStatusBarStyle[sdk=iphonesimulator*]" = UIStatusBarStyleDefault;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
@@ -616,6 +804,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		0416C5222EDEE97C00479ED2 /* Build configuration list for PBXNativeTarget "LovableeWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0416C5232EDEE97C00479ED2 /* Debug */,
+				0416C5242EDEE97C00479ED2 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		0459E8CC2EDB15AF00AA65E6 /* Build configuration list for PBXProject "lovablee" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

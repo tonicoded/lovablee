@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import UIKit
 import UserNotifications
+import WidgetKit
 
 final class PushNotificationManager: NSObject, ObservableObject {
     @Published private(set) var deviceToken: String?
@@ -81,4 +82,65 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         pushManager?.handleRegistrationError(error)
     }
+
+    // Handle remote notification when app is in background or foreground
+    func application(_ application: UIApplication,
+                     didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        print("📱 Received remote notification: \(userInfo)")
+
+        // Check if this is a doodle notification
+        if let notificationType = userInfo["type"] as? String, notificationType == "doodle" {
+            print("🎨 New doodle notification received - triggering widget update")
+
+            // Sync widget with latest doodle
+            guard WidgetDataStore.shared.hasStoredSession else {
+                completionHandler(.noData)
+                return
+            }
+            Task {
+                let success = await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+                completionHandler(success ? .newData : .noData)
+            }
+        } else {
+            // Reload widget anyway to be safe
+            WidgetCenter.shared.reloadAllTimelines()
+            completionHandler(.noData)
+        }
+    }
+
+    // Handle notification when app is in foreground
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                               willPresent notification: UNNotification,
+                               withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        print("📱 Notification will present (foreground)")
+
+        guard WidgetDataStore.shared.hasStoredSession else { return }
+        // Sync widget when notification arrives in foreground
+        Task {
+            await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+        }
+
+        // Show banner and play sound even when app is in foreground
+        completionHandler([.banner, .sound, .badge])
+    }
+
+    // Handle notification tap
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                               didReceive response: UNNotificationResponse,
+                               withCompletionHandler completionHandler: @escaping () -> Void) {
+        print("📱 User tapped notification")
+
+        guard WidgetDataStore.shared.hasStoredSession else {
+            completionHandler()
+            return
+        }
+        // Sync widget when user taps notification
+        Task {
+            await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+        }
+
+        completionHandler()
+    }
+
 }

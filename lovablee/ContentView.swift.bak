@@ -231,7 +231,7 @@ struct ContentView: View {
                 }
                 await MainActor.run {
                     self.dashboardAlert = DashboardAlert(title: "Couldn't log out",
-                                                         message: friendlyErrorMessage(for: error, fallback: "We couldn't log you out right now. Please try again."))
+                                                         message: error.localizedDescription)
                     self.isPerformingAccountAction = false
                 }
                 return
@@ -271,7 +271,7 @@ struct ContentView: View {
                 }
                 await MainActor.run {
                     self.dashboardAlert = DashboardAlert(title: "Couldn't delete account",
-                                                         message: friendlyErrorMessage(for: error, fallback: "We couldn't delete your account right now. Please try again later."))
+                                                         message: error.localizedDescription)
                     self.isPerformingAccountAction = false
                 }
                 return
@@ -346,7 +346,7 @@ struct ContentView: View {
                 }
                 await MainActor.run {
                     self.dashboardAlert = DashboardAlert(title: "Couldn't save your profile",
-                                                         message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                         message: error.localizedDescription)
                     self.isSyncingUserRecord = false
                     self.userSyncTask = nil
                 }
@@ -436,7 +436,7 @@ struct ContentView: View {
 
     private func performWithFreshSession<T>(_ operation: @escaping (SupabaseSession) async throws -> T) async throws -> T {
         guard let session = supabaseSession else {
-            throw SupabaseAuthError.unauthorized("No session available")
+            throw SupabaseAuthError.unknown
         }
         do {
             return try await operation(session)
@@ -444,14 +444,8 @@ struct ContentView: View {
             guard case .unauthorized = error else {
                 throw error
             }
-            // Try to refresh the session
-            do {
-                let refreshed = try await refreshSupabaseSession()
-                return try await operation(refreshed)
-            } catch {
-                // Refresh failed (refresh token expired), force logout
-                throw SupabaseAuthError.unauthorized("Session expired. Please sign in again.")
-            }
+            let refreshed = try await refreshSupabaseSession()
+            return try await operation(refreshed)
         }
     }
 
@@ -518,7 +512,7 @@ struct ContentView: View {
             }
             await MainActor.run {
                 self.dashboardAlert = DashboardAlert(title: "Couldn't load your profile",
-                                                     message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                     message: error.localizedDescription)
                 self.isSyncingUserRecord = false
             }
         }
@@ -589,7 +583,7 @@ struct ContentView: View {
                 }
                 await MainActor.run {
                     self.dashboardAlert = DashboardAlert(title: "Couldn't leave partner",
-                                                         message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                         message: error.localizedDescription)
                     self.isSyncingUserRecord = false
                     self.userSyncTask = nil
                 }
@@ -645,7 +639,7 @@ struct ContentView: View {
             }
             await MainActor.run {
                 self.dashboardAlert = DashboardAlert(title: "Couldn't upload photo",
-                                                     message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                     message: error.localizedDescription)
             }
         }
     }
@@ -681,7 +675,7 @@ struct ContentView: View {
 
     private func friendlyJoinPartnerMessage(for error: Error) -> String {
         guard let supabaseError = error as? SupabaseAuthError else {
-            return friendlyErrorMessage(for: error, fallback: "We couldn't link you two right now. Please try again in a moment.")
+            return "We couldn't link you two right now. Please try again in a moment."
         }
         switch supabaseError {
         case .server(let message):
@@ -698,45 +692,6 @@ struct ContentView: View {
         case .unknown:
             return "We couldn't link you two right now. Please try again in a moment."
         }
-    }
-
-    /// Convert any error to a user-friendly message
-    private func friendlyErrorMessage(for error: Error, fallback: String) -> String {
-        // Handle NetworkError specifically
-        if let networkError = error as? NetworkError {
-            return networkError.friendlyMessage
-        }
-
-        // Handle URLError (timeout, no connection, etc.)
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .notConnectedToInternet, .networkConnectionLost:
-                return "No internet connection. Please check your network and try again."
-            case .timedOut:
-                return "Request timed out. Please check your connection and try again."
-            case .cannotFindHost, .cannotConnectToHost:
-                return "Can't reach the server. Please try again later."
-            case .userAuthenticationRequired:
-                return "Your session expired. Please restart the app."
-            default:
-                return "Network error. Please check your connection and try again."
-            }
-        }
-
-        // Handle SupabaseAuthError
-        if let supabaseError = error as? SupabaseAuthError {
-            switch supabaseError {
-            case .unauthorized:
-                return "Your session expired. Please restart the app."
-            case .server:
-                return "Server error. Please try again in a moment."
-            case .unknown:
-                return fallback
-            }
-        }
-
-        // Generic fallback
-        return fallback
     }
 
     @MainActor
@@ -2121,16 +2076,10 @@ private final class SupabaseAuthService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseAuthError.unknown
         }
-
-        // Treat 401 and 400 as unauthorized (400 often returned for expired refresh tokens)
-        if httpResponse.statusCode == 401 || httpResponse.statusCode == 400 {
+        if httpResponse.statusCode == 401 {
             let message = String(data: data, encoding: .utf8) ?? "Your session expired. Please sign in again."
-            // Check if it's an auth-related error
-            if message.lowercased().contains("token") || message.lowercased().contains("session") || message.lowercased().contains("unauthorized") || httpResponse.statusCode == 401 {
-                throw SupabaseAuthError.unauthorized(message)
-            }
+            throw SupabaseAuthError.unauthorized(message)
         }
-
         guard successRange.contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Unknown Supabase error"
             throw SupabaseAuthError.server(message)
@@ -2154,7 +2103,7 @@ private final class SupabaseAuthService {
                                            nonce: nonce)
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
 
         let decoder = JSONDecoder()
@@ -2174,7 +2123,7 @@ private final class SupabaseAuthService {
         let body = ["refresh_token": refreshToken]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -2199,7 +2148,7 @@ private final class SupabaseAuthService {
                                         apnsToken: apnsToken)
         request.httpBody = try JSONEncoder().encode(record)
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
 
         let decoder = JSONDecoder()
@@ -2222,7 +2171,7 @@ private final class SupabaseAuthService {
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response, successRange: 200..<400)
     }
 
@@ -2236,7 +2185,7 @@ private final class SupabaseAuthService {
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
     }
 
@@ -2254,7 +2203,7 @@ private final class SupabaseAuthService {
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         let records = try decoder.decode([SupabaseUserRegistrationResult].self, from: data)
@@ -2290,7 +2239,7 @@ private final class SupabaseAuthService {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(payload)
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
 
         let decoder = JSONDecoder()
@@ -2311,7 +2260,7 @@ private final class SupabaseAuthService {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         request.httpBody = try encoder.encode(payload)
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
 
         let decoder = JSONDecoder()
@@ -2339,7 +2288,7 @@ private final class SupabaseAuthService {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
 
         let decoder = JSONDecoder()
@@ -2361,7 +2310,7 @@ private final class SupabaseAuthService {
         let payload = ["p_pairing_code": pairingCode.uppercased()]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -2375,7 +2324,7 @@ private final class SupabaseAuthService {
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -2391,7 +2340,7 @@ private final class SupabaseAuthService {
         let payload = ["p_message": message]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -2408,7 +2357,7 @@ private final class SupabaseAuthService {
         let payload = ["p_limit": limit]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -2453,7 +2402,7 @@ private final class SupabaseAuthService {
         let payload = ["p_content": content, "p_storage_path": NSNull()] as [String : Any]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -2470,7 +2419,7 @@ private final class SupabaseAuthService {
         let payload = ["p_limit": limit]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let (data, response) = try await NetworkService.shared.performRequest(request)
+        let (data, response) = try await URLSession.shared.data(for: request)
         _ = try validateResponse(data, response)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase

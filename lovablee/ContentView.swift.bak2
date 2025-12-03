@@ -346,7 +346,7 @@ struct ContentView: View {
                 }
                 await MainActor.run {
                     self.dashboardAlert = DashboardAlert(title: "Couldn't save your profile",
-                                                         message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                         message: error.localizedDescription)
                     self.isSyncingUserRecord = false
                     self.userSyncTask = nil
                 }
@@ -436,7 +436,7 @@ struct ContentView: View {
 
     private func performWithFreshSession<T>(_ operation: @escaping (SupabaseSession) async throws -> T) async throws -> T {
         guard let session = supabaseSession else {
-            throw SupabaseAuthError.unauthorized("No session available")
+            throw SupabaseAuthError.unknown
         }
         do {
             return try await operation(session)
@@ -444,14 +444,8 @@ struct ContentView: View {
             guard case .unauthorized = error else {
                 throw error
             }
-            // Try to refresh the session
-            do {
-                let refreshed = try await refreshSupabaseSession()
-                return try await operation(refreshed)
-            } catch {
-                // Refresh failed (refresh token expired), force logout
-                throw SupabaseAuthError.unauthorized("Session expired. Please sign in again.")
-            }
+            let refreshed = try await refreshSupabaseSession()
+            return try await operation(refreshed)
         }
     }
 
@@ -518,7 +512,7 @@ struct ContentView: View {
             }
             await MainActor.run {
                 self.dashboardAlert = DashboardAlert(title: "Couldn't load your profile",
-                                                     message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                     message: error.localizedDescription)
                 self.isSyncingUserRecord = false
             }
         }
@@ -589,7 +583,7 @@ struct ContentView: View {
                 }
                 await MainActor.run {
                     self.dashboardAlert = DashboardAlert(title: "Couldn't leave partner",
-                                                         message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                         message: error.localizedDescription)
                     self.isSyncingUserRecord = false
                     self.userSyncTask = nil
                 }
@@ -645,7 +639,7 @@ struct ContentView: View {
             }
             await MainActor.run {
                 self.dashboardAlert = DashboardAlert(title: "Couldn't upload photo",
-                                                     message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
+                                                     message: error.localizedDescription)
             }
         }
     }
@@ -2121,16 +2115,10 @@ private final class SupabaseAuthService {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw SupabaseAuthError.unknown
         }
-
-        // Treat 401 and 400 as unauthorized (400 often returned for expired refresh tokens)
-        if httpResponse.statusCode == 401 || httpResponse.statusCode == 400 {
+        if httpResponse.statusCode == 401 {
             let message = String(data: data, encoding: .utf8) ?? "Your session expired. Please sign in again."
-            // Check if it's an auth-related error
-            if message.lowercased().contains("token") || message.lowercased().contains("session") || message.lowercased().contains("unauthorized") || httpResponse.statusCode == 401 {
-                throw SupabaseAuthError.unauthorized(message)
-            }
+            throw SupabaseAuthError.unauthorized(message)
         }
-
         guard successRange.contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Unknown Supabase error"
             throw SupabaseAuthError.server(message)

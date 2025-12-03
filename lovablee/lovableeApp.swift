@@ -12,6 +12,7 @@ struct lovableeApp: App {
     @StateObject private var pushManager = PushNotificationManager()
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var didAttachDelegate = false
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -22,6 +23,14 @@ struct lovableeApp: App {
                     appDelegate.pushManager = pushManager
                     didAttachDelegate = true
                 }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            guard WidgetDataStore.shared.hasStoredSession else { return }
+            print("🎨 App became active - syncing widget")
+            Task {
+                await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+            }
         }
     }
 }
