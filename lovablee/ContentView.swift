@@ -372,6 +372,7 @@ struct ContentView: View {
                 }
             } catch {
                 guard !Task.isCancelled else { return }
+                print("❌ User registration error: \(error)")
                 if let supabaseError = error as? SupabaseAuthError,
                    case .unauthorized = supabaseError {
                     await MainActor.run {
@@ -380,10 +381,17 @@ struct ContentView: View {
                     return
                 }
                 await MainActor.run {
+                    print("❌ Showing dashboard alert for registration error")
                     self.dashboardAlert = DashboardAlert(title: "Couldn't save your profile",
                                                          message: friendlyErrorMessage(for: error, fallback: "Something went wrong. Please try again."))
                     self.isSyncingUserRecord = false
                     self.userSyncTask = nil
+                }
+                // Retry once after a delay
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                await MainActor.run {
+                    print("🔄 Retrying user registration...")
+                    synchronizeUserRecordIfNeeded()
                 }
             }
         }
@@ -943,7 +951,7 @@ struct OnboardingView: View {
                         .fill(theme.buttonFill)
                         .shadow(color: theme.shadowColor.opacity(0.28), radius: 14, y: 7)
                 )
-                .frame(width: size.width - 64)
+                .frame(width: max(0, size.width - 64))
                 .position(x: size.width * 0.5 + Layout.buttonXOffset * scaleX,
                           y: Layout.buttonY * scaleY)
 
@@ -1403,11 +1411,21 @@ private struct PermissionCard: View {
 }
 
 private struct AuthFlowView: View {
+    enum AuthMode {
+        case apple
+        case email
+    }
+
     let displayName: String
     @Binding var isLightsOut: Bool
     let onBack: () -> Void
     let onFinished: (SupabaseSession, String) -> Void
 
+    @State private var authMode: AuthMode = .apple
+    @State private var email: String = ""
+    @State private var password: String = ""
+    @State private var confirmPassword: String = ""
+    @State private var isSignUp: Bool = true
     @State private var isLoading = false
     @State private var statusMessage: String?
     @State private var errorMessage: String?
@@ -1416,11 +1434,11 @@ private struct AuthFlowView: View {
     @State private var session: SupabaseSession?
     @State private var appleIdentifier: String?
     @State private var didSignalSessionCompletion = false
-    private let highlightFeatures: [AuthFeature] = [
-        .init(title: "instant sync", icon: "arrow.triangle.2.circlepath"),
-        .init(title: "private", icon: "lock.heart"),
-        .init(title: "made for couples", icon: "heart")
-    ]
+    @FocusState private var focusedField: Field?
+
+    enum Field {
+        case email, password, confirmPassword
+    }
 
     private let authService = SupabaseAuthService.shared
 
@@ -1428,25 +1446,10 @@ private struct AuthFlowView: View {
         GeometryReader { geo in
             let size = geo.size
             let theme = isLightsOut ? Palette.darkTheme : Palette.lightTheme
-            ZStack {
-                Rectangle()
-                    .fill(Color(red: 0.996, green: 0.909, blue: 0.749))
-                    .ignoresSafeArea()
-                    .colorMultiply(isLightsOut ? Color(red: 0.55, green: 0.5, blue: 0.45) : .white)
 
-                if isLightsOut {
-                    Rectangle()
-                        .fill(Color.black.opacity(0.35))
-                        .ignoresSafeArea()
-                    RadialGradient(colors: [Color.black.opacity(0.4), Color.clear],
-                                   center: .center,
-                                   startRadius: 10,
-                                   endRadius: 420)
-                        .ignoresSafeArea()
-                        .blendMode(.multiply)
-                }
-
-                VStack(spacing: 26) {
+            ScrollView {
+                VStack(spacing: 0) {
+                    // Header
                     HStack {
                         Button {
                             hapticLight()
@@ -1459,100 +1462,65 @@ private struct AuthFlowView: View {
                                 .background(Circle().fill(theme.buttonFill.opacity(0.2)))
                         }
                         Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("lovablee")
-                                .font(.system(.headline, weight: .semibold))
-                                .tracking(4)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, geo.safeAreaInsets.top + 20)
+
+                    // Main Content
+                    VStack(spacing: 32) {
+                        // Title Section
+                        VStack(spacing: 12) {
+                            Image(systemName: "heart.circle.fill")
+                                .font(.system(size: 64, weight: .medium))
+                                .foregroundStyle(theme.buttonFill)
+
+                            Text("welcome to lovablee")
+                                .font(.system(.largeTitle, weight: .bold))
                                 .foregroundStyle(theme.textPrimary)
-                            Text("safe space for two")
-                                .font(.system(.caption))
+
+                            Text("your cozy space for two")
+                                .font(.system(.body))
                                 .foregroundStyle(theme.textMuted)
                         }
-                    }
-                    .padding(.horizontal, 24)
+                        .padding(.top, 40)
 
-                    GlassCard {
-                        VStack(spacing: 18) {
-                            Image(systemName: "heart.circle.fill")
-                                .font(.system(size: 44, weight: .semibold))
-                                .foregroundStyle(theme.buttonFill)
-                                .shadow(color: theme.buttonFill.opacity(0.35), radius: 12, y: 6)
-
-                            VStack(spacing: 8) {
-                                Text("let's keep your cozy world in sync")
-                                    .font(.system(.title3, weight: .semibold))
-                                    .multilineTextAlignment(.center)
-                                    .foregroundStyle(theme.textPrimary)
-
-                                Text("sign in with Apple so every doodle, date, and note stays safe between the two of you—no messy setups.")
-                                    .font(.system(.callout))
-                                    .foregroundStyle(theme.textMuted)
-                                    .multilineTextAlignment(.center)
-                            }
-
-                            FeatureHighlightGrid(features: highlightFeatures, theme: theme)
+                        // Auth Mode Toggle
+                        Picker("Auth Mode", selection: $authMode) {
+                            Text("Sign in with Apple").tag(AuthMode.apple)
+                            Text("Email").tag(AuthMode.email)
                         }
-                    }
-                    .padding(.horizontal, 24)
-                    .background(
-                        RoundedRectangle(cornerRadius: 32, style: .continuous)
-                            .fill(theme.buttonFill.opacity(isLightsOut ? 0.18 : 0.12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 32, style: .continuous)
-                                    .stroke(Color.white.opacity(isLightsOut ? 0.08 : 0.2), lineWidth: 1.2)
-                            )
-                            .shadow(color: theme.shadowColor.opacity(0.15), radius: 30, y: 16)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
-                    .padding(.horizontal, 24)
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, 32)
+                        .onChange(of: authMode) { _, _ in
+                            // Clear errors when switching auth mode
+                            errorMessage = nil
+                            statusMessage = nil
+                        }
 
-                    VStack(spacing: 16) {
+                        // Auth Content
+                        if authMode == .apple {
+                            appleAuthView(theme: theme)
+                        } else {
+                            emailAuthView(theme: theme)
+                        }
+
+                        // Status Messages
                         if let message = statusMessage {
                             StatusToast(text: message,
                                         theme: theme,
                                         icon: "checkmark.seal.fill",
                                         color: Color.green.opacity(0.85))
+                                .padding(.horizontal, 32)
                         } else if let error = errorMessage {
                             StatusToast(text: error,
                                         theme: theme,
                                         icon: "exclamationmark.triangle.fill",
                                         color: Color.red.opacity(0.85))
-                        } else {
-                            Text("Your partner will be able to join later. For now, just pick your Apple ID and we’ll set up the rest.")
-                                .font(.system(.callout))
-                                .foregroundStyle(theme.textMuted)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 34)
+                                .padding(.horizontal, 32)
                         }
-
-                        SignInWithAppleButton(.signIn) { request in
-                            let nonce = AppleNonce.random()
-                            currentNonce = nonce                // raw nonce we send to Supabase
-                            currentNonceHashed = nonce.sha256()  // hashed nonce we send to Apple
-                            request.requestedScopes = [.fullName, .email]
-                            request.nonce = currentNonceHashed
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                errorMessage = nil
-                            }
-                        } onCompletion: { result in
-                            handleAppleResult(result)
-                        }
-                        .frame(height: 58)
-                        .cornerRadius(20)
-                        .signInWithAppleButtonStyle(isLightsOut ? .white : .black)
-                        .overlay {
-                            if isLoading {
-                                ZStack {
-                                    Color.black.opacity(0.1)
-                                    ProgressView().progressViewStyle(.circular)
-                                }
-                                .cornerRadius(20)
-                            }
-                        }
-                        .padding(.horizontal, 40)
-                        .disabled(isLoading)
                     }
 
+                    // Terms and Privacy
                     VStack(spacing: 6) {
                         Text("By continuing, you agree to lovablee's")
                             .font(.system(.footnote))
@@ -1570,10 +1538,242 @@ private struct AuthFlowView: View {
                         }
                     }
                     .padding(.horizontal, 24)
-
-                    Spacer(minLength: 10)
+                    .padding(.top, 32)
+                    .padding(.bottom, geo.safeAreaInsets.bottom + 40)
                 }
-                .frame(width: size.width)
+                .frame(maxWidth: .infinity)
+            }
+            .background(
+                Rectangle()
+                    .fill(Color(red: 0.996, green: 0.909, blue: 0.749))
+                    .ignoresSafeArea()
+                    .colorMultiply(isLightsOut ? Color(red: 0.55, green: 0.5, blue: 0.45) : .white)
+            )
+        }
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    @ViewBuilder
+    private func appleAuthView(theme: PaletteTheme) -> some View {
+        VStack(spacing: 20) {
+            Text("Quick and secure sign in with your Apple ID")
+                .font(.system(.callout))
+                .foregroundStyle(theme.textMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+
+            SignInWithAppleButton(.signIn) { request in
+                let nonce = AppleNonce.random()
+                currentNonce = nonce
+                currentNonceHashed = nonce.sha256()
+                request.requestedScopes = [.fullName, .email]
+                request.nonce = currentNonceHashed
+                // Clear any previous error messages
+                errorMessage = nil
+                statusMessage = nil
+            } onCompletion: { result in
+                handleAppleResult(result)
+            }
+            .frame(height: 56)
+            .cornerRadius(16)
+            .signInWithAppleButtonStyle(isLightsOut ? .white : .black)
+            .overlay {
+                if isLoading && authMode == .apple {
+                    ZStack {
+                        Color.black.opacity(0.1)
+                        ProgressView().progressViewStyle(.circular)
+                    }
+                    .cornerRadius(16)
+                }
+            }
+            .padding(.horizontal, 32)
+            .disabled(isLoading)
+        }
+    }
+
+    @ViewBuilder
+    private func emailAuthView(theme: PaletteTheme) -> some View {
+        VStack(spacing: 24) {
+            // Sign Up / Sign In Toggle
+            HStack(spacing: 0) {
+                Button {
+                    hapticLight()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSignUp = true
+                        errorMessage = nil
+                    }
+                } label: {
+                    Text("Sign Up")
+                        .font(.system(.body, weight: isSignUp ? .semibold : .regular))
+                        .foregroundStyle(isSignUp ? theme.textPrimary : theme.textMuted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    hapticLight()
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSignUp = false
+                        errorMessage = nil
+                    }
+                } label: {
+                    Text("Sign In")
+                        .font(.system(.body, weight: !isSignUp ? .semibold : .regular))
+                        .foregroundStyle(!isSignUp ? theme.textPrimary : theme.textMuted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 32)
+
+            // Email/Password Fields
+            VStack(spacing: 16) {
+                // Email Field
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Email")
+                        .font(.system(.subheadline, weight: .medium))
+                        .foregroundStyle(theme.textPrimary)
+
+                    TextField("your@email.com", text: $email)
+                        .textContentType(.emailAddress)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.emailAddress)
+                        .focused($focusedField, equals: .email)
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(focusedField == .email ? theme.buttonFill : Color.clear, lineWidth: 2)
+                        )
+                }
+
+                // Password Field
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Password")
+                        .font(.system(.subheadline, weight: .medium))
+                        .foregroundStyle(theme.textPrimary)
+
+                    SecureField("••••••••", text: $password)
+                        .textContentType(isSignUp ? .newPassword : .password)
+                        .focused($focusedField, equals: .password)
+                        .padding(16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(focusedField == .password ? theme.buttonFill : Color.clear, lineWidth: 2)
+                        )
+                }
+
+                // Confirm Password Field (only for sign up)
+                if isSignUp {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Confirm Password")
+                            .font(.system(.subheadline, weight: .medium))
+                            .foregroundStyle(theme.textPrimary)
+
+                        SecureField("••••••••", text: $confirmPassword)
+                            .textContentType(.newPassword)
+                            .focused($focusedField, equals: .confirmPassword)
+                            .padding(16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(isLightsOut ? Color.white.opacity(0.1) : Color.white)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(focusedField == .confirmPassword ? theme.buttonFill : Color.clear, lineWidth: 2)
+                            )
+                    }
+                }
+            }
+            .padding(.horizontal, 32)
+
+            // Submit Button
+            Button {
+                hapticSoft()
+                handleEmailAuth()
+            } label: {
+                if isLoading && authMode == .email {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(.white)
+                } else {
+                    Text(isSignUp ? "Create Account" : "Sign In")
+                        .font(.system(.headline, weight: .semibold))
+                }
+            }
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(theme.buttonFill)
+            )
+            .padding(.horizontal, 32)
+            .disabled(isLoading || !isEmailFormValid)
+            .opacity(isEmailFormValid ? 1.0 : 0.5)
+        }
+    }
+
+    private var isEmailFormValid: Bool {
+        let emailValid = !email.trimmingCharacters(in: .whitespaces).isEmpty &&
+                        email.contains("@") && email.contains(".")
+        let passwordValid = password.count >= 6
+
+        if isSignUp {
+            return emailValid && passwordValid && password == confirmPassword
+        } else {
+            return emailValid && passwordValid
+        }
+    }
+
+    private func handleEmailAuth() {
+        guard isEmailFormValid else { return }
+
+        errorMessage = nil
+        isLoading = true
+        focusedField = nil
+
+        Task {
+            do {
+                let session: SupabaseSession
+                if isSignUp {
+                    session = try await authService.signUpWithEmail(email: email.trimmingCharacters(in: .whitespaces),
+                                                                    password: password)
+                    await MainActor.run {
+                        self.session = session
+                        self.appleIdentifier = session.user.id
+                        self.statusMessage = "Account created successfully!"
+                        self.errorMessage = nil
+                        self.isLoading = false
+                        self.completeSessionIfNeeded()
+                    }
+                } else {
+                    session = try await authService.signInWithEmail(email: email.trimmingCharacters(in: .whitespaces),
+                                                                    password: password)
+                    await MainActor.run {
+                        self.session = session
+                        self.appleIdentifier = session.user.id
+                        self.statusMessage = "Signed in successfully!"
+                        self.errorMessage = nil
+                        self.isLoading = false
+                        self.completeSessionIfNeeded()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = friendlyAuthMessage(for: error)
+                    self.isLoading = false
+                }
             }
         }
     }
@@ -1643,10 +1843,14 @@ private struct AuthFlowView: View {
     }
 
     private func friendlyAuthMessage(for error: Error) -> String {
+        print("❌ Auth error: \(error)")
         if let supabaseError = error as? SupabaseAuthError {
-            return supabaseError.errorDescription ?? "We couldn't save your session. Please try again."
+            let description = supabaseError.errorDescription ?? "We couldn't save your session. Please try again."
+            print("❌ Supabase error description: \(description)")
+            return description
         }
-        return "We couldn't sign you in just now. Please try again in a moment."
+        print("❌ Unknown error: \(error.localizedDescription)")
+        return error.localizedDescription
     }
 
     @MainActor
@@ -2261,6 +2465,24 @@ private final class SupabaseAuthService {
 
         guard successRange.contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "Unknown Supabase error"
+            print("❌ Supabase error response (status \(httpResponse.statusCode)):")
+            print("   Raw response: \(message)")
+
+            // Try to parse JSON error message
+            if let jsonData = message.data(using: .utf8),
+               let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                print("   Parsed JSON: \(json)")
+                if let errorMsg = json["error_description"] as? String ?? json["message"] as? String ?? json["msg"] as? String ?? json["hint"] as? String {
+                    print("   Error message: \(errorMsg)")
+                    throw SupabaseAuthError.server(errorMsg)
+                }
+                // Check for details field (common in Supabase errors)
+                if let details = json["details"] as? String {
+                    print("   Details: \(details)")
+                    throw SupabaseAuthError.server(details)
+                }
+            }
+
             throw SupabaseAuthError.server(message)
         }
         return httpResponse
@@ -2281,6 +2503,68 @@ private final class SupabaseAuthService {
                                            idToken: idToken,
                                            nonce: nonce)
         request.httpBody = try JSONEncoder().encode(payload)
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode(SupabaseSession.self, from: data)
+    }
+
+    func signUpWithEmail(email: String, password: String) async throws -> SupabaseSession {
+        var request = URLRequest(url: projectURL.appendingPathComponent("auth/v1/signup"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let payload: [String: String] = [
+            "email": email,
+            "password": password
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        // Try to decode as a full session first (when email confirmation is disabled)
+        if let session = try? decoder.decode(SupabaseSession.self, from: data) {
+            return session
+        }
+
+        // If that fails, it means email confirmation is required
+        // Parse the response to check
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            print("📧 Signup response: \(json)")
+
+            // Check if there's a user but no session (confirmation required)
+            if let _ = json["id"] as? String {
+                throw SupabaseAuthError.server("Please check your email to confirm your account, then sign in.")
+            }
+        }
+
+        throw SupabaseAuthError.server("Signup failed. Please try again.")
+    }
+
+    func signInWithEmail(email: String, password: String) async throws -> SupabaseSession {
+        var components = URLComponents(url: projectURL.appendingPathComponent("auth/v1/token"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "grant_type", value: "password")]
+
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(anonKey)", forHTTPHeaderField: "Authorization")
+
+        let payload: [String: String] = [
+            "email": email,
+            "password": password
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
         let (data, response) = try await NetworkService.shared.performRequest(request)
         _ = try validateResponse(data, response)
@@ -2314,6 +2598,8 @@ private final class SupabaseAuthService {
                       email: String?,
                       displayName: String,
                       apnsToken: String?) async throws -> SupabaseUserRegistrationResult {
+        print("📝 Registering user: id=\(session.user.id), appleId=\(appleIdentifier), email=\(email ?? "nil"), name=\(displayName)")
+
         var request = URLRequest(url: projectURL.appendingPathComponent(usersTablePath))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -2325,10 +2611,18 @@ private final class SupabaseAuthService {
                                         appleIdentifier: appleIdentifier,
                                         displayName: displayName,
                                         apnsToken: apnsToken)
+
+        if let jsonString = String(data: try JSONEncoder().encode(record), encoding: .utf8) {
+            print("📤 Sending user record: \(jsonString)")
+        }
         request.httpBody = try JSONEncoder().encode(record)
 
         let (data, response) = try await NetworkService.shared.performRequest(request)
+
+        print("📥 Got response, validating...")
         _ = try validateResponse(data, response)
+
+        print("✅ User registration request successful")
 
         let decoder = JSONDecoder()
         let records = try decoder.decode([SupabaseUserRegistrationResult].self, from: data)
