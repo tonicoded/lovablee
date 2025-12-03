@@ -11,8 +11,10 @@ struct SupabasePetStatus: Codable {
     let lastActiveDate: Date?
     let lastWateredAt: Date?
     let lastPlayedAt: Date?
+    let lastFedAt: Date?
     let lastNoteSentAt: Date?
     let lastDoodleCreatedAt: Date?
+    let lastPlantWateredAt: Date?
     let adoptedAt: Date?
     let updatedAt: Date?
 
@@ -27,8 +29,10 @@ struct SupabasePetStatus: Codable {
         case lastActiveDate
         case lastWateredAt
         case lastPlayedAt
+        case lastFedAt
         case lastNoteSentAt
         case lastDoodleCreatedAt
+        case lastPlantWateredAt
         case adoptedAt
         case updatedAt
     }
@@ -43,8 +47,10 @@ struct SupabasePetStatus: Codable {
          lastActiveDate: Date? = nil,
          lastWateredAt: Date?,
          lastPlayedAt: Date?,
+         lastFedAt: Date? = nil,
          lastNoteSentAt: Date? = nil,
          lastDoodleCreatedAt: Date? = nil,
+         lastPlantWateredAt: Date? = nil,
          adoptedAt: Date?,
          updatedAt: Date?) {
         self.userId = userId
@@ -57,8 +63,10 @@ struct SupabasePetStatus: Codable {
         self.lastActiveDate = lastActiveDate
         self.lastWateredAt = lastWateredAt
         self.lastPlayedAt = lastPlayedAt
+        self.lastFedAt = lastFedAt
         self.lastNoteSentAt = lastNoteSentAt
         self.lastDoodleCreatedAt = lastDoodleCreatedAt
+        self.lastPlantWateredAt = lastPlantWateredAt
         self.adoptedAt = adoptedAt
         self.updatedAt = updatedAt
     }
@@ -79,8 +87,10 @@ struct SupabasePetStatus: Codable {
         }
         lastWateredAt = try container.decodeIfPresent(Date.self, forKey: .lastWateredAt)
         lastPlayedAt = try container.decodeIfPresent(Date.self, forKey: .lastPlayedAt)
+        lastFedAt = try container.decodeIfPresent(Date.self, forKey: .lastFedAt)
         lastNoteSentAt = try container.decodeIfPresent(Date.self, forKey: .lastNoteSentAt)
         lastDoodleCreatedAt = try container.decodeIfPresent(Date.self, forKey: .lastDoodleCreatedAt)
+        lastPlantWateredAt = try container.decodeIfPresent(Date.self, forKey: .lastPlantWateredAt)
         adoptedAt = try container.decodeIfPresent(Date.self, forKey: .adoptedAt)
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
     }
@@ -89,8 +99,10 @@ struct SupabasePetStatus: Codable {
 enum PetActionType: String, Codable {
     case water
     case play
+    case feed
     case note
     case doodle
+    case plant
 }
 
 struct LoveNote: Codable, Identifiable {
@@ -169,6 +181,7 @@ extension SupabasePetStatus {
             lastActiveDate: Date().addingTimeInterval(-60 * 60 * 2),
             lastWateredAt: Date().addingTimeInterval(-60 * 60 * 7),
             lastPlayedAt: Date().addingTimeInterval(-60 * 60 * 3),
+            lastPlantWateredAt: Date().addingTimeInterval(-60 * 60 * 5),
             adoptedAt: Date().addingTimeInterval(-60 * 60 * 24 * 12),
             updatedAt: Date().addingTimeInterval(-60 * 5)
         )
@@ -186,6 +199,7 @@ extension SupabasePetStatus {
             lastActiveDate: Date().addingTimeInterval(-60 * 60 * 2),
             lastWateredAt: Date().addingTimeInterval(-60 * 60 * 2),
             lastPlayedAt: Date().addingTimeInterval(-60 * 15),
+            lastPlantWateredAt: Date().addingTimeInterval(-60 * 10),
             adoptedAt: Date().addingTimeInterval(-60 * 60 * 24 * 3),
             updatedAt: Date().addingTimeInterval(-60 * 20)
         )

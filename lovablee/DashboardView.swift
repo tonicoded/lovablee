@@ -36,10 +36,12 @@ struct DashboardView: View {
     @State private var activeTab: DashboardNavTab = .home
     @State private var keyboardHeight: CGFloat = 0
     @State private var isPetSheetPresented = false
+    @State private var isPlantSheetPresented = false
     @State private var isLoveNoteSheetPresented = false
     @State private var isLoveboxInboxPresented = false
     @State private var isDoodleSheetPresented = false
     @State private var isDoodleGalleryPresented = false
+    @State private var cooldownAlert: CooldownAlert?
     @State private var petStatus: SupabasePetStatus?
     @State private var isPetStatusLoading = false
     @State private var isPerformingPetAction = false
@@ -83,8 +85,11 @@ struct DashboardView: View {
                                                           interval: PetCareScreen.waterCooldown)
             let playCooldownRemaining = cooldownRemaining(from: petStatus?.lastPlayedAt,
                                                          interval: PetCareScreen.playCooldown)
+            let feedCooldownRemaining = cooldownRemaining(from: petStatus?.lastFedAt,
+                                                         interval: PetCareScreen.feedCooldown)
             let waterReady = waterCooldownRemaining == nil
             let playReady = playCooldownRemaining == nil
+            let _ = feedCooldownRemaining
 
             ZStack {
                 if activeTab == .home {
@@ -99,6 +104,9 @@ struct DashboardView: View {
                                    playAction: {
                                         triggerPetShortcut(.play)
                                    },
+                                   plantAction: {
+                                        openPlantSheet()
+                                   },
                                    loveboxAction: {
                                         isLoveboxInboxPresented = true
                                    },
@@ -107,6 +115,7 @@ struct DashboardView: View {
                                    },
                                    waterEnabled: waterReady,
                                    playEnabled: playReady,
+                                   plantEnabled: true, // Always enabled - cooldown shown in sheet
                                    decorPlacement: DashboardDecor.placement,
                                    heroAction: {
                                         openPetSheet()
@@ -147,7 +156,9 @@ struct DashboardView: View {
                                      isLightsOut: isLightsOut,
                                      dogName: petDisplayName,
                                      onWater: { triggerPetShortcut(.water) },
-                                     onPlay: { triggerPetShortcut(.play) })
+                                     onPlay: { triggerPetShortcut(.play) },
+                                     onNote: { triggerPetShortcut(.note) },
+                                     onDoodle: { triggerPetShortcut(.doodle) })
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
 
@@ -246,33 +257,92 @@ struct DashboardView: View {
                               onSend: { message in
                                   Task {
                                       do {
+                                          let previousHearts = petStatus?.hearts ?? 0
+                                          print("💌 Sending love note... Current hearts: \(previousHearts)")
                                           try await onSendLoveNote?(message)
+                                          print("💌 Love note sent successfully!")
+
+                                          // Refresh and wait for completion
                                           await MainActor.run {
                                               refreshLoveNotes(force: true)
                                           }
+
+                                          // Refresh pet status and wait for it to complete
+                                          await refreshPetStatusAsync()
+
+                                          // Now check if we earned hearts
+                                          await MainActor.run {
+                                              if let status = petStatus {
+                                                  print("💌 New hearts: \(status.hearts)")
+                                                  let heartsEarned = status.hearts - previousHearts
+                                                  print("💌 Hearts earned: \(heartsEarned)")
+
+                                                  if heartsEarned > 0 {
+                                                      hapticSuccess()
+                                                      withAnimation(.spring(response: 0.55, dampingFraction: 0.9)) {
+                                                          self.rewardNotice = PetRewardNotice(
+                                                              heartsEarned: heartsEarned,
+                                                              totalHearts: status.hearts,
+                                                              streakCount: status.streakCount,
+                                                              streakBumped: false,
+                                                              action: .note
+                                                          )
+                                                      }
+                                                      print("💌 Showing reward notice!")
+                                                  } else {
+                                                      print("💌 No hearts earned (possibly already on cooldown)")
+                                                  }
+                                              } else {
+                                                  print("💌 Pet status is nil after refresh")
+                                              }
+                                          }
                                       } catch {
-                                          print("Error sending love note: \(error)")
+                                          print("❌ Error sending love note: \(error)")
+                                          // Check if it's a cooldown error
+                                          let errorString = String(describing: error)
+                                          if errorString.contains("cooldown_active") {
+                                              // Refresh status to get updated cooldown
+                                              await refreshPetStatusAsync()
+                                              await MainActor.run {
+                                                  if let status = petStatus, let lastNote = status.lastNoteSentAt {
+                                                      let timeRemaining = 3600 - Int(Date().timeIntervalSince(lastNote))
+                                                      let minutesRemaining = max(1, timeRemaining / 60)
+                                                      onPetAlert?("💌 Love note cooldown", "Please wait \(minutesRemaining) more minutes before sending another love note!")
+                                                  } else {
+                                                      onPetAlert?("💌 Love note cooldown", "You need to wait before sending another love note!")
+                                                  }
+                                              }
+                                          } else {
+                                              await MainActor.run {
+                                                  onPetAlert?("Error", "Failed to send love note. Please try again.")
+                                              }
+                                          }
                                       }
                                   }
                               })
             }
             .fullScreenCover(isPresented: $isLoveboxInboxPresented) {
-                LoveboxInboxView(
+                LoveboxInboxViewWrapper(
                     theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
                     isLightsOut: isLightsOut,
                     safeAreaInsets: stableInsets,
                     loveNotes: loveNotes,
                     isLoading: isLoveNotesLoading,
                     userId: userIdentifier,
+                    partnerName: partnerName ?? "Partner",
+                    getPetStatus: { petStatus },
                     onClose: {
                         isLoveboxInboxPresented = false
                     },
                     onRefresh: {
                         refreshLoveNotes(force: true)
                     },
-                    onCompose: {
+                    onComposeAllowed: {
                         isLoveboxInboxPresented = false
                         isLoveNoteSheetPresented = true
+                    },
+                    onRefreshStatus: {
+                        await refreshPetStatusAsync()
                     }
                 )
                 .onAppear {
@@ -286,36 +356,92 @@ struct DashboardView: View {
                                 onSave: { image in
                                     Task {
                                         do {
-                                            print("🎨 Starting doodle save...")
+                                            let previousHearts = petStatus?.hearts ?? 0
+                                            print("🎨 Starting doodle save... Current hearts: \(previousHearts)")
                                             try await onSaveDoodle?(image)
                                             print("🎨 Doodle saved successfully!")
+
+                                            // Refresh and wait for completion
                                             await MainActor.run {
                                                 refreshDoodles(force: true)
+                                            }
+
+                                            // Refresh pet status and wait for it to complete
+                                            await refreshPetStatusAsync()
+
+                                            // Now check if we earned hearts
+                                            await MainActor.run {
+                                                if let status = petStatus {
+                                                    print("🎨 New hearts: \(status.hearts)")
+                                                    let heartsEarned = status.hearts - previousHearts
+                                                    print("🎨 Hearts earned: \(heartsEarned)")
+
+                                                    if heartsEarned > 0 {
+                                                        hapticSuccess()
+                                                        withAnimation(.spring(response: 0.55, dampingFraction: 0.9)) {
+                                                            self.rewardNotice = PetRewardNotice(
+                                                                heartsEarned: heartsEarned,
+                                                                totalHearts: status.hearts,
+                                                                streakCount: status.streakCount,
+                                                                streakBumped: false,
+                                                                action: .doodle
+                                                            )
+                                                        }
+                                                        print("🎨 Showing reward notice!")
+                                                    } else {
+                                                        print("🎨 No hearts earned (possibly already on cooldown)")
+                                                    }
+                                                } else {
+                                                    print("🎨 Pet status is nil after refresh")
+                                                }
                                             }
                                         } catch {
                                             print("❌ Error saving doodle: \(error)")
                                             print("❌ Error details: \(error.localizedDescription)")
+                                            // Check if it's a cooldown error
+                                            let errorString = String(describing: error)
+                                            if errorString.contains("cooldown_active") {
+                                                // Refresh status to get updated cooldown
+                                                await refreshPetStatusAsync()
+                                                await MainActor.run {
+                                                    if let status = petStatus, let lastDoodle = status.lastDoodleCreatedAt {
+                                                        let timeRemaining = 900 - Int(Date().timeIntervalSince(lastDoodle))
+                                                        let minutesRemaining = max(1, timeRemaining / 60)
+                                                        onPetAlert?("🎨 Doodle cooldown", "Please wait \(minutesRemaining) more minutes before creating another doodle!")
+                                                    } else {
+                                                        onPetAlert?("🎨 Doodle cooldown", "You need to wait before creating another doodle!")
+                                                    }
+                                                }
+                                            } else {
+                                                await MainActor.run {
+                                                    onPetAlert?("Error", "Failed to save doodle. Please try again.")
+                                                }
+                                            }
                                         }
                                     }
                                 })
             }
             .fullScreenCover(isPresented: $isDoodleGalleryPresented) {
-                DoodleGalleryView(
+                DoodleGalleryViewWrapper(
                     theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
                     isLightsOut: isLightsOut,
                     safeAreaInsets: stableInsets,
                     doodles: doodles,
                     isLoading: isDoodlesLoading,
                     userId: userIdentifier,
+                    getPetStatus: { petStatus },
                     onClose: {
                         isDoodleGalleryPresented = false
                     },
                     onRefresh: {
                         refreshDoodles(force: true)
                     },
-                    onDrawNew: {
+                    onDrawAllowed: {
                         isDoodleGalleryPresented = false
                         isDoodleSheetPresented = true
+                    },
+                    onRefreshStatus: {
+                        await refreshPetStatusAsync()
                     }
                 )
                 .onAppear {
@@ -331,6 +457,7 @@ struct DashboardView: View {
                                  onRefresh: { refreshPetStatus(force: true) },
                                  onWater: { handlePetAction(.water) },
                                  onPlay: { handlePetAction(.play) },
+                                 onFeed: { handlePetAction(.feed) },
                                  onRenamePet: onRenamePet,
                                  onRenameCompleted: { refreshPetStatus(force: true) })
                     .background(
@@ -351,6 +478,51 @@ struct DashboardView: View {
                                          .zIndex(2)
                                      }
                                  
+
+                    if let rewardNotice {
+                        RewardCelebrationView(notice: rewardNotice,
+                                              theme: theme,
+                                              isLightsOut: isLightsOut) {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.9)) {
+                                self.rewardNotice = nil
+                            }
+                        }
+                        .id(rewardNotice.id)
+                        .zIndex(2)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $isPlantSheetPresented) {
+                ZStack {
+                    PlantSheetView(
+                        lastWateredAt: petStatus?.lastPlantWateredAt,
+                        theme: theme,
+                        isLightsOut: isLightsOut,
+                        onClose: { isPlantSheetPresented = false },
+                        onWater: {
+                            // Don't close the sheet - show overlay on top
+                            handlePetAction(.plant)
+                        }
+                    )
+                    .id("\(petStatus?.lastPlantWateredAt?.timeIntervalSince1970 ?? 0)") // Force refresh with timestamp
+                    .background(
+                        backgroundGradient(isDark: isLightsOut)
+                            .ignoresSafeArea()
+                    )
+
+                    if let activePetAction {
+                        PetActionProgressOverlay(action: activePetAction,
+                                                 theme: theme,
+                                                 isLightsOut: isLightsOut,
+                                                 petName: petStatus?.petName ?? "Bubba",
+                                                 onComplete: {
+                                                     await completePetAction(activePetAction)
+                                                 }
+                                             )
+                                             .transition(.opacity)
+                                             .zIndex(2)
+                    }
 
                     if let rewardNotice {
                         RewardCelebrationView(notice: rewardNotice,
@@ -402,6 +574,11 @@ struct DashboardView: View {
             activityRefreshTimer?.cancel()
             activityRefreshTimer = nil
         }
+        .alert(item: $cooldownAlert) { alert in
+            Alert(title: Text(alert.title),
+                  message: Text(alert.message),
+                  dismissButton: .default(Text("OK")))
+        }
         .onChange(of: activeTab) { _, newValue in
             if newValue == .activity {
                 refreshActivity(force: activityItems.isEmpty)
@@ -438,6 +615,11 @@ struct DashboardView: View {
         refreshPetStatus(force: true)
     }
 
+    private func openPlantSheet() {
+        isPlantSheetPresented = true
+        refreshPetStatus(force: true)
+    }
+
     private func refreshPetStatus(force: Bool = false) {
         guard let loader = loadPetStatus else { return }
         if isPetStatusLoading && !force { return }
@@ -458,6 +640,23 @@ struct DashboardView: View {
                         self.isPetSheetPresented = false
                     }
                 }
+            }
+        }
+    }
+
+    private func refreshPetStatusAsync() async {
+        guard let loader = loadPetStatus else { return }
+        do {
+            let status = try await loader()
+            await MainActor.run {
+                self.petStatus = status
+                self.isPetStatusLoading = false
+                self.animateCounters(to: status)
+            }
+        } catch {
+            await MainActor.run {
+                self.isPetStatusLoading = false
+                print("❌ Error refreshing pet status: \(error)")
             }
         }
     }
@@ -579,12 +778,6 @@ struct DashboardView: View {
     }
 
     private func triggerPetShortcut(_ action: PetActionType) {
-        guard performPetAction != nil else {
-            openPetSheet()
-            return
-        }
-        guard !isPerformingPetAction else { return }
-
         // Check cooldown before allowing action
         if let status = petStatus {
             let now = Date()
@@ -601,10 +794,49 @@ struct DashboardView: View {
                     onPetAlert?("Still energized", "Wait a bit before playing with \(status.petName) again!")
                     return
                 }
-            case .note, .doodle:
-                break // Not used in shortcuts for pet actions
+            case .feed:
+                if let lastFed = status.lastFedAt,
+                   now.timeIntervalSince(lastFed) < 3600 { // 1 hour
+                    onPetAlert?("Still full", "Wait a bit before feeding \(status.petName) again!")
+                    return
+                }
+            case .plant:
+                if let lastPlant = status.lastPlantWateredAt,
+                   now.timeIntervalSince(lastPlant) < 900 { // 15 minutes
+                    onPetAlert?("Plant still fresh", "Wait a bit before watering the plant again!")
+                    return
+                }
+            case .note:
+                if let lastNote = status.lastNoteSentAt,
+                   now.timeIntervalSince(lastNote) < 3600 { // 1 hour
+                    onPetAlert?("Love note cooldown", "Wait a bit before sending another love note!")
+                    return
+                }
+            case .doodle:
+                if let lastDoodle = status.lastDoodleCreatedAt,
+                   now.timeIntervalSince(lastDoodle) < 900 { // 15 minutes
+                    onPetAlert?("Doodle cooldown", "Wait a bit before creating another doodle!")
+                    return
+                }
             }
         }
+
+        // Handle love notes and doodles separately - open their sheets
+        if action == .note {
+            openLoveNoteSheet()
+            return
+        }
+        if action == .doodle {
+            openDoodleSheet()
+            return
+        }
+
+        // Handle water and play actions
+        guard performPetAction != nil else {
+            openPetSheet()
+            return
+        }
+        guard !isPerformingPetAction else { return }
 
         if !isPetSheetPresented {
             isPetSheetPresented = true
@@ -613,6 +845,46 @@ struct DashboardView: View {
         // Give the sheet a moment to appear, then perform the action (same feel as tapping Bubba)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             handlePetAction(action)
+        }
+    }
+
+    private func openLoveNoteSheet() {
+        // Refresh and check cooldown before opening
+        Task {
+            await refreshPetStatusAsync()
+            await MainActor.run {
+                if let status = petStatus {
+                    let now = Date()
+                    if let lastNote = status.lastNoteSentAt,
+                       now.timeIntervalSince(lastNote) < 3600 { // 1 hour
+                        let timeRemaining = 3600 - Int(now.timeIntervalSince(lastNote))
+                        let minutesRemaining = timeRemaining / 60
+                        onPetAlert?("💌 Love note cooldown", "Please wait \(minutesRemaining) more minutes before sending another love note!")
+                        return
+                    }
+                }
+                isLoveNoteSheetPresented = true
+            }
+        }
+    }
+
+    private func openDoodleSheet() {
+        // Refresh and check cooldown before opening
+        Task {
+            await refreshPetStatusAsync()
+            await MainActor.run {
+                if let status = petStatus {
+                    let now = Date()
+                    if let lastDoodle = status.lastDoodleCreatedAt,
+                       now.timeIntervalSince(lastDoodle) < 900 { // 15 minutes
+                        let timeRemaining = 900 - Int(now.timeIntervalSince(lastDoodle))
+                        let minutesRemaining = timeRemaining / 60
+                        onPetAlert?("🎨 Doodle cooldown", "Please wait \(minutesRemaining) more minutes before creating another doodle!")
+                        return
+                    }
+                }
+                isDoodleSheetPresented = true
+            }
         }
     }
 
@@ -642,6 +914,10 @@ struct DashboardView: View {
                 lastActiveDate: status.lastActiveDate,
                 lastWateredAt: status.lastWateredAt,
                 lastPlayedAt: status.lastPlayedAt,
+                lastFedAt: status.lastFedAt,
+                lastNoteSentAt: status.lastNoteSentAt,
+                lastDoodleCreatedAt: status.lastDoodleCreatedAt,
+                lastPlantWateredAt: status.lastPlantWateredAt,
                 adoptedAt: status.adoptedAt,
                 updatedAt: Date()
             )
@@ -790,12 +1066,12 @@ private enum PetLayout {
 
     // Pet image
     static let petX: CGFloat = canvasWidth / 2
-    static let petY: CGFloat = 220
+    static let petY: CGFloat = 250
     static let petSize: CGFloat = 200
 
     // Mood + description
     static let moodX: CGFloat = canvasWidth / 2
-    static let moodY: CGFloat = 320
+    static let moodY: CGFloat = 370
     static let descX: CGFloat = canvasWidth / 2
     static let descY: CGFloat = 350
     static let descWidth: CGFloat = canvasWidth - 60
@@ -811,7 +1087,7 @@ private enum PetLayout {
 
     // Actions
     static let actionsX: CGFloat = canvasWidth / 2
-    static let actionsY: CGFloat = 570
+    static let actionsY: CGFloat = 510
     static let actionWidth: CGFloat = 150
     static let actionHeight: CGFloat = 100
     static let actionSpacing: CGFloat = 26
@@ -825,6 +1101,7 @@ private struct PetLayoutTab: View {
     let onRefresh: () -> Void
     let onWater: () -> Void
     let onPlay: () -> Void
+    let onFeed: () -> Void
     let onRenamePet: ((String) async throws -> Void)?
     let onRenameCompleted: (() -> Void)?
 
@@ -837,6 +1114,9 @@ private struct PetLayoutTab: View {
     }
     private var playCooldownText: String? {
         formattedCooldown(from: status?.lastPlayedAt, interval: 15 * 60)
+    }
+    private var feedCooldownText: String? {
+        formattedCooldown(from: status?.lastFedAt, interval: 1 * 60 * 60)
     }
     private var adoptedText: String { relativeOrFallback(date: status?.adoptedAt, fallback: "recently") }
     private var updatedText: String { relativeOrFallback(date: status?.updatedAt, fallback: "just now") }
@@ -869,8 +1149,10 @@ private struct PetLayoutTab: View {
                         updatedText: updatedText,
                         waterCooldownText: waterCooldownText,
                         playCooldownText: playCooldownText,
+                        feedCooldownText: feedCooldownText,
                         onWater: onWater,
-                        onPlay: onPlay
+                        onPlay: onPlay,
+                        onFeed: onFeed
                     )
                     .frame(width: PetLayout.canvasWidth, alignment: .center)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -932,11 +1214,14 @@ private struct PetLayoutTab: View {
         let updatedText: String
         let waterCooldownText: String?
         let playCooldownText: String?
+        let feedCooldownText: String?
         let onWater: () -> Void
         let onPlay: () -> Void
+        let onFeed: () -> Void
 
         @State private var isWaterPressed = false
         @State private var isPlayPressed = false
+        @State private var isFeedPressed = false
 
         var body: some View {
             ZStack {
@@ -956,24 +1241,21 @@ private struct PetLayoutTab: View {
                     .frame(width: PetLayout.petSize, height: PetLayout.petSize)
                     .position(x: PetLayout.petX, y: PetLayout.petY)
 
-                Text(mood)
-                    .font(.system(.headline, weight: .semibold))
-                    .foregroundColor(theme.textPrimary)
-                    .position(x: PetLayout.moodX, y: PetLayout.moodY)
+                // Mood label and value
+                VStack(spacing: 4) {
+                    Text("MOOD")
+                        .font(.system(.caption, weight: .bold))
+                        .foregroundColor(theme.textMuted)
+                        .textCase(.uppercase)
 
-                Text("\(petName.lowercased()) is feeling cozy.")
-                    .font(.system(.subheadline))
-                    .foregroundColor(theme.textMuted)
-                    .multilineTextAlignment(.center)
-                    .frame(width: PetLayout.descWidth)
-                    .position(x: PetLayout.descX, y: PetLayout.descY)
+                    Text(mood)
+                        .font(.system(.title2, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                }
+                .position(x: PetLayout.moodX, y: PetLayout.moodY)
 
                 infoPills
                     .position(x: PetLayout.canvasWidth / 2, y: PetLayout.infoY)
-
-                gauges
-                    .frame(width: PetLayout.gaugeWidth)
-                    .position(x: PetLayout.gaugesX, y: PetLayout.gaugesY)
 
                 actions
                     .frame(width: PetLayout.canvasWidth)
@@ -981,23 +1263,7 @@ private struct PetLayoutTab: View {
             }
         }
 
-        private var gauges: some View {
-            VStack(spacing: 14) {
-                Label("hydration \(hydration)%", systemImage: "drop.fill")
-                    .foregroundColor(theme.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ProgressView(value: Float(hydration) / 100)
-                    .tint(Color(red: 0.3, green: 0.65, blue: 1.0))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Label("playfulness \(play)%", systemImage: "sparkles")
-                    .foregroundColor(theme.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ProgressView(value: Float(play) / 100)
-                    .tint(Color(red: 0.97, green: 0.5, blue: 0.62))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
+        // Removed gauges - now showing only mood in the card
 
         private var infoPills: some View {
             HStack(spacing: PetLayout.infoSpacing) {
@@ -1020,46 +1286,82 @@ private struct PetLayoutTab: View {
         }
 
         private var actions: some View {
-            HStack(spacing: PetLayout.actionSpacing) {
-                VStack {
-                    Image(systemName: "drop.fill")
-                        .font(.system(size: 24))
-                    Text("Water")
-                        .font(.system(.subheadline, weight: .semibold))
-                    if let waterCooldownText {
-                        Text(waterCooldownText)
-                            .font(.caption2)
-                            .foregroundColor(theme.textMuted)
+            VStack(spacing: 12) {
+                // Top row: Water and Play
+                HStack(spacing: PetLayout.actionSpacing) {
+                    VStack {
+                        Image(systemName: "drop.fill")
+                            .font(.system(size: 24))
+                        Text("Water")
+                            .font(.system(.subheadline, weight: .semibold))
+                        if let waterCooldownText {
+                            Text(waterCooldownText)
+                                .font(.caption2)
+                                .foregroundColor(theme.textMuted)
+                        }
                     }
-                }
-                .foregroundColor(theme.textPrimary)
-                .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
-                .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
-                .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
-                .scaleEffect(isWaterPressed ? 0.9 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isWaterPressed)
-                .opacity(waterCooldownText != nil ? 0.6 : 1)
-                .onTapGesture {
-                    guard waterCooldownText == nil else { return }
-                    withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
-                        isWaterPressed = true
+                    .foregroundColor(theme.textPrimary)
+                    .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
+                    .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
+                    .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
+                    .scaleEffect(isWaterPressed ? 0.9 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isWaterPressed)
+                    .opacity(waterCooldownText != nil ? 0.6 : 1)
+                    .onTapGesture {
+                        guard waterCooldownText == nil else { return }
+                        withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
+                            isWaterPressed = true
+                        }
+                        hapticExtreme()
+                        onWater()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                isWaterPressed = false
+                            }
+                        }
                     }
-                    hapticExtreme()
-                    onWater()
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                            isWaterPressed = false
+
+                    VStack {
+                        Image(systemName: "gamecontroller.fill")
+                            .font(.system(size: 24))
+                        Text("Play")
+                            .font(.system(.subheadline, weight: .semibold))
+                        if let playCooldownText {
+                            Text(playCooldownText)
+                                .font(.caption2)
+                                .foregroundColor(theme.textMuted)
+                        }
+                    }
+                    .foregroundColor(theme.textPrimary)
+                    .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
+                    .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
+                    .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
+                    .scaleEffect(isPlayPressed ? 0.9 : 1.0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isPlayPressed)
+                    .opacity(playCooldownText != nil ? 0.6 : 1)
+                    .onTapGesture {
+                        guard playCooldownText == nil else { return }
+                        withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
+                            isPlayPressed = true
+                        }
+                        hapticExtreme()
+                        onPlay()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                isPlayPressed = false
+                            }
                         }
                     }
                 }
 
+                // Bottom row: Feed (centered)
                 VStack {
-                    Image(systemName: "gamecontroller.fill")
+                    Image(systemName: "fork.knife")
                         .font(.system(size: 24))
-                    Text("Play")
+                    Text("Feed")
                         .font(.system(.subheadline, weight: .semibold))
-                    if let playCooldownText {
-                        Text(playCooldownText)
+                    if let feedCooldownText {
+                        Text(feedCooldownText)
                             .font(.caption2)
                             .foregroundColor(theme.textMuted)
                     }
@@ -1068,19 +1370,19 @@ private struct PetLayoutTab: View {
                 .frame(width: PetLayout.actionWidth, height: PetLayout.actionHeight)
                 .background(RoundedRectangle(cornerRadius: 20).fill(buttonBackground))
                 .shadow(color: Color.black.opacity(isLightsOut ? 0.25 : 0.08), radius: 8, y: 6)
-                .scaleEffect(isPlayPressed ? 0.9 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isPlayPressed)
-                .opacity(playCooldownText != nil ? 0.6 : 1)
+                .scaleEffect(isFeedPressed ? 0.9 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isFeedPressed)
+                .opacity(feedCooldownText != nil ? 0.6 : 1)
                 .onTapGesture {
-                    guard playCooldownText == nil else { return }
+                    guard feedCooldownText == nil else { return }
                     withAnimation(.spring(response: 0.15, dampingFraction: 0.5)) {
-                        isPlayPressed = true
+                        isFeedPressed = true
                     }
                     hapticExtreme()
-                    onPlay()
+                    onFeed()
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
-                            isPlayPressed = false
+                            isFeedPressed = false
                         }
                     }
                 }
@@ -1398,6 +1700,10 @@ private enum DashboardDecor {
     static let heroXOffset: CGFloat = Layout.heroXOffset - 6
     static let heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor * 0.92
 
+    static let giftWidth: CGFloat = 180
+    static let giftXOffset: CGFloat = 100
+    static let giftOffsetFromFloor: CGFloat = 580
+
     static var placement: DecorPlacement {
         DecorPlacement.dashboard(
             floorWidthFactor: floorWidthFactor,
@@ -1427,7 +1733,10 @@ private enum DashboardDecor {
             windowXOffset: windowXOffset,
             windowY: windowY,
             heroXOffset: heroXOffset,
-            heroOffsetFromFloor: heroOffsetFromFloor
+            heroOffsetFromFloor: heroOffsetFromFloor,
+            giftWidth: giftWidth,
+            giftXOffset: giftXOffset,
+            giftOffsetFromFloor: giftOffsetFromFloor
         )
     }
 }
@@ -1503,6 +1812,8 @@ private struct ShortcutsTabView: View {
     let dogName: String
     let onWater: () -> Void
     let onPlay: () -> Void
+    let onNote: () -> Void
+    let onDoodle: () -> Void
 
     private struct ShortcutItem: Identifiable {
         let id = UUID()
@@ -1524,14 +1835,24 @@ private struct ShortcutsTabView: View {
         [
             ShortcutItem(icon: "drop.fill",
                          title: "Give \(dogName) water",
-                         subtitle: "Hydration boost",
+                         subtitle: "Improve mood",
                          tint: Color(red: 0.34, green: 0.63, blue: 0.95),
                          action: onWater),
             ShortcutItem(icon: "gamecontroller.fill",
                          title: "Play with \(dogName)",
-                         subtitle: "Sparkly energy",
+                         subtitle: "Improve mood",
                          tint: Color(red: 0.98, green: 0.52, blue: 0.64),
-                         action: onPlay)
+                         action: onPlay),
+            ShortcutItem(icon: "heart.text.square.fill",
+                         title: "Send love note",
+                         subtitle: "Earn +10 hearts (1h cooldown)",
+                         tint: Color(red: 0.95, green: 0.45, blue: 0.65),
+                         action: onNote),
+            ShortcutItem(icon: "paintbrush.fill",
+                         title: "Create doodle",
+                         subtitle: "Earn +10 hearts (15m cooldown)",
+                         tint: Color(red: 0.75, green: 0.45, blue: 0.95),
+                         action: onDoodle)
         ]
     }
 
@@ -1932,6 +2253,64 @@ private struct SettingsView: View {
     }
 }
 
+// MARK: - Lovebox Inbox View Wrapper (handles cooldown checking)
+private struct LoveboxInboxViewWrapper: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let safeAreaInsets: EdgeInsets
+    let loveNotes: [LoveNote]
+    let isLoading: Bool
+    let userId: String?
+    let partnerName: String
+    let getPetStatus: () -> SupabasePetStatus?
+    let onClose: () -> Void
+    let onRefresh: () -> Void
+    let onComposeAllowed: () -> Void
+    let onRefreshStatus: () async -> Void
+
+    @State private var showCooldownAlert = false
+    @State private var cooldownAlertMessage = ""
+
+    var body: some View {
+        LoveboxInboxView(
+            theme: theme,
+            isLightsOut: isLightsOut,
+            safeAreaInsets: safeAreaInsets,
+            loveNotes: loveNotes,
+            isLoading: isLoading,
+            userId: userId,
+            partnerName: partnerName,
+            onClose: onClose,
+            onRefresh: onRefresh,
+            onCompose: {
+                Task {
+                    await onRefreshStatus()
+                    await MainActor.run {
+                        // Get fresh status after refresh
+                        if let status = getPetStatus() {
+                            let now = Date()
+                            if let lastNote = status.lastNoteSentAt,
+                               now.timeIntervalSince(lastNote) < 3600 {
+                                let timeRemaining = 3600 - Int(now.timeIntervalSince(lastNote))
+                                let minutesRemaining = max(1, timeRemaining / 60)
+                                cooldownAlertMessage = "Please wait \(minutesRemaining) more minutes before sending another love note!"
+                                showCooldownAlert = true
+                                return
+                            }
+                        }
+                        onComposeAllowed()
+                    }
+                }
+            }
+        )
+        .alert("💌 Love Note Cooldown", isPresented: $showCooldownAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(cooldownAlertMessage)
+        }
+    }
+}
+
 // MARK: - Lovebox Inbox View
 private struct LoveboxInboxView: View {
     let theme: PaletteTheme
@@ -1940,6 +2319,7 @@ private struct LoveboxInboxView: View {
     let loveNotes: [LoveNote]
     let isLoading: Bool
     let userId: String?
+    let partnerName: String
     let onClose: () -> Void
     let onRefresh: () -> Void
     let onCompose: () -> Void
@@ -2052,7 +2432,8 @@ private struct LoveboxInboxView: View {
                                     note: note,
                                     theme: theme,
                                     isLightsOut: isLightsOut,
-                                    currentUserId: userId ?? ""
+                                    currentUserId: userId ?? "",
+                                    partnerName: partnerName
                                 )
                             }
                         }
@@ -2119,6 +2500,7 @@ private struct LoveNoteInboxCard: View {
     let theme: PaletteTheme
     let isLightsOut: Bool
     let currentUserId: String
+    let partnerName: String
 
     private var isFromMe: Bool {
         note.senderId == currentUserId
@@ -2134,7 +2516,7 @@ private struct LoveNoteInboxCard: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(isFromMe ? "To: \(note.senderName)" : "From: \(note.senderName)")
+                    Text(isFromMe ? "To: \(partnerName)" : "From: \(note.senderName)")
                         .font(.system(size: 14, weight: .bold))
                         .foregroundColor(theme.textPrimary)
 
@@ -2168,6 +2550,62 @@ private struct LoveNoteInboxCard: View {
 }
 
 // MARK: - Doodle Gallery View
+// MARK: - Doodle Gallery View Wrapper (handles cooldown checking)
+private struct DoodleGalleryViewWrapper: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let safeAreaInsets: EdgeInsets
+    let doodles: [Doodle]
+    let isLoading: Bool
+    let userId: String?
+    let getPetStatus: () -> SupabasePetStatus?
+    let onClose: () -> Void
+    let onRefresh: () -> Void
+    let onDrawAllowed: () -> Void
+    let onRefreshStatus: () async -> Void
+
+    @State private var showCooldownAlert = false
+    @State private var cooldownAlertMessage = ""
+
+    var body: some View {
+        DoodleGalleryView(
+            theme: theme,
+            isLightsOut: isLightsOut,
+            safeAreaInsets: safeAreaInsets,
+            doodles: doodles,
+            isLoading: isLoading,
+            userId: userId,
+            onClose: onClose,
+            onRefresh: onRefresh,
+            onDrawNew: {
+                Task {
+                    await onRefreshStatus()
+                    await MainActor.run {
+                        // Get fresh status after refresh
+                        if let status = getPetStatus() {
+                            let now = Date()
+                            if let lastDoodle = status.lastDoodleCreatedAt,
+                               now.timeIntervalSince(lastDoodle) < 900 {
+                                let timeRemaining = 900 - Int(now.timeIntervalSince(lastDoodle))
+                                let minutesRemaining = max(1, timeRemaining / 60)
+                                cooldownAlertMessage = "Please wait \(minutesRemaining) more minutes before creating another doodle!"
+                                showCooldownAlert = true
+                                return
+                            }
+                        }
+                        onDrawAllowed()
+                    }
+                }
+            }
+        )
+        .alert("🎨 Doodle Cooldown", isPresented: $showCooldownAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(cooldownAlertMessage)
+        }
+    }
+}
+
 private struct DoodleGalleryView: View {
     let theme: PaletteTheme
     let isLightsOut: Bool
@@ -2284,23 +2722,32 @@ private struct DoodleGalleryView: View {
                     emptyState
                     Spacer()
                 } else {
-                    ScrollView {
-                        LazyVGrid(columns: [
+                    GeometryReader { geo in
+                        let isIPad = geo.size.width > 600
+                        let columns = isIPad ? [
+                            GridItem(.flexible(), spacing: 16),
+                            GridItem(.flexible(), spacing: 16),
+                            GridItem(.flexible(), spacing: 16)
+                        ] : [
                             GridItem(.flexible(), spacing: 12),
                             GridItem(.flexible(), spacing: 12)
-                        ], spacing: 12) {
-                            ForEach(filteredDoodles) { doodle in
-                                Button(action: {
-                                    hapticSoft()
-                                    selectedDoodleForFullscreen = doodle
-                                }) {
-                                    DoodleGridItem(doodle: doodle, theme: theme, isLightsOut: isLightsOut, currentUserId: userId ?? "")
+                        ]
+
+                        ScrollView {
+                            LazyVGrid(columns: columns, spacing: isIPad ? 16 : 12) {
+                                ForEach(filteredDoodles) { doodle in
+                                    Button(action: {
+                                        hapticSoft()
+                                        selectedDoodleForFullscreen = doodle
+                                    }) {
+                                        DoodleGridItem(doodle: doodle, theme: theme, isLightsOut: isLightsOut, currentUserId: userId ?? "")
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
                                 }
-                                .buttonStyle(PlainButtonStyle())
                             }
+                            .padding(.horizontal, isIPad ? 32 : 20)
+                            .padding(.bottom, safeAreaInsets.bottom + 80)
                         }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, safeAreaInsets.bottom + 80)
                     }
                 }
             }
@@ -2402,8 +2849,7 @@ private struct DoodleGridItem: View {
             if let image = doodleImage {
                 Image(uiImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(height: 150)
+                    .aspectRatio(1, contentMode: .fill)
                     .clipped()
                     .cornerRadius(12)
             } else if doodle.storagePath != nil {
@@ -2415,7 +2861,7 @@ private struct DoodleGridItem: View {
                         case .empty:
                             Rectangle()
                                 .fill(Color.gray.opacity(0.2))
-                                .frame(height: 150)
+                                .aspectRatio(1, contentMode: .fill)
                                 .overlay(
                                     ProgressView()
                                         .tint(theme.textPrimary)
@@ -2423,13 +2869,12 @@ private struct DoodleGridItem: View {
                         case .success(let image):
                             image
                                 .resizable()
-                                .aspectRatio(contentMode: .fill)
-                                .frame(height: 150)
+                                .aspectRatio(1, contentMode: .fill)
                                 .clipped()
                         case .failure:
                             Rectangle()
                                 .fill(Color.gray.opacity(0.2))
-                                .frame(height: 150)
+                                .aspectRatio(1, contentMode: .fill)
                                 .overlay(
                                     Image(systemName: "exclamationmark.triangle")
                                         .foregroundColor(theme.textMuted)
@@ -2443,7 +2888,7 @@ private struct DoodleGridItem: View {
             } else {
                 Rectangle()
                     .fill(Color.gray.opacity(0.2))
-                    .frame(height: 150)
+                    .aspectRatio(1, contentMode: .fill)
                     .overlay(
                         Image(systemName: "exclamationmark.triangle")
                             .foregroundColor(theme.textMuted)
@@ -2906,9 +3351,12 @@ private struct PetCareScreen: View {
     let onRefresh: () -> Void
     let onGiveWater: () -> Void
     let onPlay: () -> Void
+    let onFeed: () -> Void
 
     static let waterCooldown: TimeInterval = 1 * 60 * 60
     static let playCooldown: TimeInterval = 15 * 60
+    static let feedCooldown: TimeInterval = 1 * 60 * 60
+    static let plantCooldown: TimeInterval = 15 * 60
     private static let overlayMinimumDuration: TimeInterval = 10
 
     private var petName: String { status?.petName ?? "Bubba" }
@@ -2946,6 +3394,9 @@ private struct PetCareScreen: View {
     }
     private var playCooldownRemaining: TimeInterval? {
         cooldownRemaining(since: status?.lastPlayedAt, interval: Self.playCooldown)
+    }
+    private var feedCooldownRemaining: TimeInterval? {
+        cooldownRemaining(since: status?.lastFedAt, interval: Self.feedCooldown)
     }
 
     var body: some View {
@@ -3100,36 +3551,57 @@ private struct PetCareScreen: View {
     }
 
     private var gaugesCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("vitals")
-                .font(.system(.caption, weight: .bold))
-                .foregroundColor(theme.textMuted.opacity(0.9))
-                .textCase(.uppercase)
-                .padding(.horizontal, 4)
+        VStack(alignment: .leading, spacing: 18) {
+            // Mood
+            HStack(spacing: 12) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 24))
+                    .foregroundColor(theme.buttonFill)
 
-            HStack(spacing: 16) {
-                vitalityGauge(
-                    label: "hydration",
-                    value: hydrationLevel,
-                    accent: LinearGradient(colors: [
-                        Color(red: 0.4, green: 0.73, blue: 0.96),
-                        Color(red: 0.62, green: 0.87, blue: 1.0)
-                    ], startPoint: .leading, endPoint: .trailing),
-                    icon: "drop.fill"
-                )
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("MOOD")
+                        .font(.system(.caption, weight: .bold))
+                        .foregroundColor(theme.textMuted.opacity(0.9))
+                        .textCase(.uppercase)
 
-                vitalityGauge(
-                    label: "playfulness",
-                    value: playfulnessLevel,
-                    accent: LinearGradient(colors: [
-                        Color(red: 0.99, green: 0.61, blue: 0.73),
-                        Color(red: 0.98, green: 0.74, blue: 0.86)
-                    ], startPoint: .leading, endPoint: .trailing),
-                    icon: "sparkles"
-                )
+                    Text(moodText.capitalized)
+                        .font(.system(.title3, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                }
+
+                Spacer()
+            }
+
+            Divider()
+                .background(theme.textMuted.opacity(0.2))
+
+            // Adopted
+            HStack(spacing: 12) {
+                Image(systemName: "pawprint.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(theme.buttonFill)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("ADOPTED")
+                        .font(.system(.caption, weight: .bold))
+                        .foregroundColor(theme.textMuted.opacity(0.9))
+                        .textCase(.uppercase)
+
+                    if let adoptedAt = status?.adoptedAt {
+                        Text(adoptedAt.formatted(date: .abbreviated, time: .omitted))
+                            .font(.system(.title3, weight: .bold))
+                            .foregroundColor(theme.textPrimary)
+                    } else {
+                        Text("Unknown")
+                            .font(.system(.title3, weight: .bold))
+                            .foregroundColor(theme.textPrimary)
+                    }
+                }
+
+                Spacer()
             }
         }
-        .padding(18)
+        .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(cardBackground)
@@ -3141,50 +3613,21 @@ private struct PetCareScreen: View {
         )
     }
 
-    private func vitalityGauge(label: String,
-                               value: Int,
-                               accent: LinearGradient,
-                               icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(label, systemImage: icon)
-                    .font(.system(.subheadline, weight: .semibold))
-                    .foregroundColor(theme.textPrimary)
-                Spacer()
-                Text("\(value)%")
-                    .font(.system(.headline, weight: .bold))
-                    .foregroundColor(theme.textPrimary)
-            }
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(isLightsOut ? 0.08 : 0.2))
-                        .frame(height: 12)
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(accent)
-                        .frame(width: max(0, CGFloat(value) / 100 * geo.size.width),
-                               height: 12)
-                        .shadow(color: Color.black.opacity(isLightsOut ? 0.3 : 0.12), radius: 10, y: 6)
-                }
-            }
-            .frame(height: 12)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private var actionSection: some View {
         GeometryReader { proxy in
             let availableWidth = proxy.size.width
             let spacing = min(18, max(12, availableWidth * 0.035))
-            let columnWidth = max(120, (availableWidth - spacing) / 2)
+            let columnWidth = max(120, (availableWidth - spacing * 2) / 3)
             let waterDiameter = min(150, columnWidth * 0.9)
             let playDiameter = min(130, columnWidth * 0.82)
+            let feedDiameter = min(140, columnWidth * 0.86)
             let waterIconSize = min(90, waterDiameter * 0.62)
             let playIconSize = min(72, playDiameter * 0.55)
+            let feedIconSize = min(80, feedDiameter * 0.58)
             let isStatusReady = status != nil && !isLoading
             let waterDisabled = !isStatusReady || isPerformingAction || waterCooldownRemaining != nil
             let playDisabled = !isStatusReady || isPerformingAction || playCooldownRemaining != nil
+            let feedDisabled = !isStatusReady || isPerformingAction || feedCooldownRemaining != nil
 
             VStack(alignment: .leading, spacing: 18) {
                 Text("acts of care")
@@ -3219,6 +3662,19 @@ private struct PetCareScreen: View {
                         action: { triggerAction(.play) }
                     )
                     .frame(width: columnWidth)
+
+                    actionButton(
+                        icon: "food",
+                        title: "Feed time",
+                        detail: "yummy treat & happy mood",
+                        iconSize: feedIconSize,
+                        diameter: feedDiameter,
+                        isDisabled: feedDisabled,
+                        cooldownText: cooldownText(for: feedCooldownRemaining),
+                        accent: Color(red: 0.95, green: 0.77, blue: 0.06),
+                        action: { triggerAction(.feed) }
+                    )
+                    .frame(width: columnWidth)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -3236,6 +3692,10 @@ private struct PetCareScreen: View {
             onGiveWater()
         case .play:
             onPlay()
+        case .feed:
+            onFeed()
+        case .plant:
+            break // No specific action needed, handled by overlay
         case .note, .doodle:
             break // Not used in PetCareScreen
         }
@@ -3515,17 +3975,35 @@ private struct PetActionProgressOverlay: View {
     @State private var tapCount = 0
     @State private var bubbaScale: CGFloat = 1.0
     @State private var isCompletingAction = false
+    @State private var isHolding = false
+    @State private var holdTimer: Timer?
 
     private let totalTaps = 20
 
     private var accent: Color {
-        action == .water
-        ? Color(red: 0.4, green: 0.73, blue: 0.96)
-        : Color(red: 0.99, green: 0.61, blue: 0.73)
+        switch action {
+        case .water:
+            return Color(red: 0.4, green: 0.73, blue: 0.96)
+        case .play:
+            return Color(red: 0.99, green: 0.61, blue: 0.73)
+        case .feed:
+            return Color(red: 0.95, green: 0.77, blue: 0.06)
+        case .plant:
+            return Color(red: 0.55, green: 0.78, blue: 0.48)
+        case .note, .doodle:
+            return Color(red: 0.4, green: 0.73, blue: 0.96)
+        }
     }
 
     private var title: String {
-        action == .water ? "Watering" : "Playtime boost"
+        switch action {
+        case .water: return "Watering"
+        case .play: return "Playtime boost"
+        case .feed: return "Feeding time"
+        case .plant: return "Watering plant"
+        case .note: return "Love note"
+        case .doodle: return "Doodle"
+        }
     }
 
     private var referenceName: String {
@@ -3535,9 +4013,18 @@ private struct PetActionProgressOverlay: View {
 
     private var subtitle: String {
         let base = referenceName
-        return action == .water
-            ? "\(base) is sipping up the love."
-            : "\(base) is getting extra wiggles."
+        switch action {
+        case .water:
+            return "\(base) is sipping up the love."
+        case .play:
+            return "\(base) is getting extra wiggles."
+        case .feed:
+            return "\(base) is munching a tasty treat."
+        case .plant:
+            return "Helping your plant grow."
+        case .note, .doodle:
+            return ""
+        }
     }
 
     private var cardBackground: Color {
@@ -3548,6 +4035,8 @@ private struct PetActionProgressOverlay: View {
         switch action {
         case .water: return "water"
         case .play: return "paws"
+        case .feed: return "paws"
+        case .plant: return "water"
         case .note: return "water" // Fallback
         case .doodle: return "paws" // Fallback
         }
@@ -3594,6 +4083,18 @@ private struct PetActionProgressOverlay: View {
                                 scale: ActionLayout.playScale,
                                 offsetX: ActionLayout.playOffsetX,
                                 offsetY: ActionLayout.playOffsetY)
+        case .feed:
+            return LottieConfig(name: "paws",
+                                size: ActionLayout.playSize,
+                                scale: ActionLayout.playScale,
+                                offsetX: ActionLayout.playOffsetX,
+                                offsetY: ActionLayout.playOffsetY)
+        case .plant:
+            return LottieConfig(name: "water",
+                                size: ActionLayout.waterSize,
+                                scale: ActionLayout.waterScale,
+                                offsetX: ActionLayout.waterOffsetX,
+                                offsetY: ActionLayout.waterOffsetY)
         case .note:
             return LottieConfig(name: "water",
                                 size: ActionLayout.waterSize,
@@ -3611,15 +4112,28 @@ private struct PetActionProgressOverlay: View {
 
     private var phaseLine: String {
         let base = referenceName
-        switch progress {
-        case ..<0.33:
-            return "Tap \(base) to fill the bar!"
-        case ..<0.66:
-            return "Keep tapping... \(base) loves it!"
-        case ..<1.0:
-            return "Almost there! Keep going!"
-        default:
-            return "\(base) is so happy!"
+        if action == .plant {
+            switch progress {
+            case ..<0.33:
+                return "👆 HOLD the plant to fill the bar!"
+            case ..<0.66:
+                return "Keep holding... almost there!"
+            case ..<1.0:
+                return "Almost done! Keep holding!"
+            default:
+                return "Your plant is happy!"
+            }
+        } else {
+            switch progress {
+            case ..<0.33:
+                return "👆 TAP \(base) repeatedly to fill the bar!"
+            case ..<0.66:
+                return "Keep tapping... \(base) loves it!"
+            case ..<1.0:
+                return "Almost there! Keep going!"
+            default:
+                return "\(base) is so happy!"
+            }
         }
     }
 
@@ -3682,7 +4196,7 @@ private struct PetActionProgressOverlay: View {
 
     private var progressStack: some View {
         VStack(spacing: 8) {
-            ProgressView(value: progress)
+            ProgressView(value: min(1.0, max(0.0, progress)), total: 1.0)
                 .progressViewStyle(.linear)
                 .tint(accent)
                 .padding(.horizontal)
@@ -3707,17 +4221,69 @@ private struct PetActionProgressOverlay: View {
                 .scaleEffect(lottieConfig.scale, anchor: .center)
                 .offset(x: lottieConfig.offsetX, y: lottieConfig.offsetY)
 
-            Image("bubbaopen")
+            Image(action == .plant ? "plant" : "bubbaopen")
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: ActionLayout.heroSize, height: ActionLayout.heroSize)
                 .scaleEffect(bubbaScale)
                 .offset(x: ActionLayout.heroOffsetX, y: ActionLayout.heroOffsetY)
+                .gesture(
+                    action == .plant ?
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { _ in
+                            if !isHolding {
+                                isHolding = true
+                                startHoldProgress()
+                            }
+                        }
+                        .onEnded { _ in
+                            isHolding = false
+                            holdTimer?.invalidate()
+                            holdTimer = nil
+                        } :
+                    nil
+                )
                 .onTapGesture {
-                    handleTap()
+                    if action != .plant {
+                        handleTap()
+                    }
                 }
         }
         .frame(height: 260)
+    }
+
+    private func startHoldProgress() {
+        guard !isCompletingAction else { return }
+
+        // Haptic feedback
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+
+        // Start timer for continuous progress (3 seconds to complete)
+        holdTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [self] _ in
+            guard isHolding, progress < 1 else {
+                holdTimer?.invalidate()
+                holdTimer = nil
+                if progress >= 1 && !isCompletingAction {
+                    isCompletingAction = true
+                    hapticSuccess()
+                    Task {
+                        await onComplete()
+                    }
+                }
+                return
+            }
+
+            // Increment progress (clamped to max 1.0)
+            progress = min(1.0, progress + (0.05 / 3.0))
+
+            // Bubba bounce
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) {
+                bubbaScale = 1.1
+            }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.6).delay(0.05)) {
+                bubbaScale = 1.0
+            }
+        }
     }
 
     private func handleTap() {
@@ -4056,6 +4622,7 @@ private struct LottieView: UIViewRepresentable {
                  onRefresh: {},
                  onWater: {},
                  onPlay: {},
+                 onFeed: {},
                  onRenamePet: nil,
                  onRenameCompleted: nil)
 }
@@ -4068,6 +4635,7 @@ private struct LottieView: UIViewRepresentable {
                  onRefresh: {},
                  onWater: {},
                  onPlay: {},
+                 onFeed: {},
                  onRenamePet: nil,
                  onRenameCompleted: nil)
 }
@@ -4080,7 +4648,14 @@ private struct LottieView: UIViewRepresentable {
                  onRefresh: {},
                  onWater: {},
                  onPlay: {},
+                 onFeed: {},
                  onRenamePet: nil,
                  onRenameCompleted: nil)
+}
+
+private struct CooldownAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
 }
 

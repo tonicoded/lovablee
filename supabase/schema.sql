@@ -155,8 +155,10 @@ create table if not exists public.pet_status (
     last_active_date date,
     last_watered_at timestamptz,
     last_played_at timestamptz,
+    last_fed_at timestamptz,
     last_note_sent_at timestamptz,
     last_doodle_created_at timestamptz,
+    last_plant_watered_at timestamptz,
     adopted_at timestamptz not null default timezone('utc', now()),
     updated_at timestamptz not null default timezone('utc', now())
 );
@@ -714,6 +716,62 @@ begin
                 updated_at = now_utc
             where user_id = partner_user_id;
         end if;
+    elsif action_type = 'feed' then
+        -- Feed action: 1 hour cooldown, no stat changes, just awards hearts (already done above)
+        if base_status.last_fed_at is not null
+            and now_utc - base_status.last_fed_at < water_cooldown then
+            raise exception 'pet_action_cooldown'
+                using detail = 'feed';
+        end if;
+
+        -- Update timestamp to mark activity
+        update public.pet_status
+        set last_fed_at = now_utc,
+            updated_at = now_utc
+        where user_id = auth.uid()
+        returning * into updated_status;
+
+        updated_status.hearts := couple_row.hearts;
+        updated_status.streak_count := couple_row.streak_count;
+        updated_status.last_active_date := couple_row.last_active_date;
+
+        if partner_user_id is not null then
+            insert into public.pet_status (user_id) values (partner_user_id)
+            on conflict (user_id) do nothing;
+
+            update public.pet_status
+            set last_fed_at = now_utc,
+                updated_at = now_utc
+            where user_id = partner_user_id;
+        end if;
+    elsif action_type = 'plant' then
+        -- Plant watering: 15 minute cooldown, no stat changes, just awards hearts (already done above)
+        if base_status.last_plant_watered_at is not null
+            and now_utc - base_status.last_plant_watered_at < play_cooldown then
+            raise exception 'pet_action_cooldown'
+                using detail = 'plant';
+        end if;
+
+        -- Update timestamp to mark activity
+        update public.pet_status
+        set last_plant_watered_at = now_utc,
+            updated_at = now_utc
+        where user_id = auth.uid()
+        returning * into updated_status;
+
+        updated_status.hearts := couple_row.hearts;
+        updated_status.streak_count := couple_row.streak_count;
+        updated_status.last_active_date := couple_row.last_active_date;
+
+        if partner_user_id is not null then
+            insert into public.pet_status (user_id) values (partner_user_id)
+            on conflict (user_id) do nothing;
+
+            update public.pet_status
+            set last_plant_watered_at = now_utc,
+                updated_at = now_utc
+            where user_id = partner_user_id;
+        end if;
     else
         raise exception 'unknown_pet_action';
     end if;
@@ -792,6 +850,8 @@ declare
     v_couple_key text;
     sender_display_name text;
     new_note public.love_notes%rowtype;
+    v_last_note_sent_at timestamptz;
+    v_cooldown_hours int := 1;
 begin
     select partner_id, pairing_code, display_name
     into partner_user_id, my_pairing_code, sender_display_name
@@ -803,6 +863,15 @@ begin
 
     if partner_user_id = auth.uid() then
         raise exception 'cannot_send_to_self';
+    end if;
+
+    -- Check cooldown
+    select last_note_sent_at into v_last_note_sent_at
+    from public.pet_status where user_id = auth.uid();
+
+    if v_last_note_sent_at is not null and
+       v_last_note_sent_at > (now() - (v_cooldown_hours || ' hours')::interval) then
+        raise exception 'cooldown_active';
     end if;
 
     select pairing_code into partner_pairing_code
@@ -822,6 +891,16 @@ begin
     insert into public.love_notes (couple_key, sender_id, sender_name, message)
     values (v_couple_key, auth.uid(), coalesce(sender_display_name, 'Someone'), p_message)
     returning * into new_note;
+
+    -- Update cooldown timestamp for THIS user only
+    update public.pet_status
+    set last_note_sent_at = now()
+    where user_id = auth.uid();
+
+    -- Award +10 hearts to the COUPLE (shared between both partners)
+    update public.couple_progress
+    set hearts = coalesce(hearts, 0) + 10
+    where couple_key = v_couple_key;
 
     -- Send push notification to partner
     if partner_user_id is not null then
@@ -962,6 +1041,8 @@ declare
     v_couple_key text;
     sender_display_name text;
     new_doodle public.doodles%rowtype;
+    v_last_doodle_created_at timestamptz;
+    v_cooldown_minutes int := 15;
 begin
     select partner_id, pairing_code, display_name
     into partner_user_id, my_pairing_code, sender_display_name
@@ -973,6 +1054,15 @@ begin
 
     if partner_user_id = auth.uid() then
         raise exception 'cannot_send_to_self';
+    end if;
+
+    -- Check cooldown
+    select last_doodle_created_at into v_last_doodle_created_at
+    from public.pet_status where user_id = auth.uid();
+
+    if v_last_doodle_created_at is not null and
+       v_last_doodle_created_at > (now() - (v_cooldown_minutes || ' minutes')::interval) then
+        raise exception 'cooldown_active';
     end if;
 
     select pairing_code into partner_pairing_code
@@ -992,6 +1082,16 @@ begin
     insert into public.doodles (couple_key, sender_id, sender_name, storage_path, content)
     values (v_couple_key, auth.uid(), coalesce(sender_display_name, 'Someone'), p_storage_path, p_content)
     returning * into new_doodle;
+
+    -- Update cooldown timestamp for THIS user only
+    update public.pet_status
+    set last_doodle_created_at = now()
+    where user_id = auth.uid();
+
+    -- Award +10 hearts to the COUPLE (shared between both partners)
+    update public.couple_progress
+    set hearts = coalesce(hearts, 0) + 10
+    where couple_key = v_couple_key;
 
     -- Send push notification to partner
     if partner_user_id is not null then

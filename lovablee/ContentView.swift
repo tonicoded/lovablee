@@ -1644,10 +1644,12 @@ struct CozyDecorLayer: View {
     let lightAction: (() -> Void)?
     let waterAction: (() -> Void)?
     let playAction: (() -> Void)?
+    let plantAction: (() -> Void)?
     let loveboxAction: (() -> Void)?
     let galleryAction: (() -> Void)?
     let waterEnabled: Bool
     let playEnabled: Bool
+    let plantEnabled: Bool
     let decorPlacement: DecorPlacement
     let heroAction: (() -> Void)?
     let heroAllowsInteraction: Bool?
@@ -1659,10 +1661,12 @@ struct CozyDecorLayer: View {
          lightAction: (() -> Void)?,
          waterAction: (() -> Void)? = nil,
          playAction: (() -> Void)? = nil,
+         plantAction: (() -> Void)? = nil,
          loveboxAction: (() -> Void)? = nil,
          galleryAction: (() -> Void)? = nil,
          waterEnabled: Bool = true,
          playEnabled: Bool = true,
+         plantEnabled: Bool = true,
          decorPlacement: DecorPlacement = .onboarding,
          heroAction: (() -> Void)? = nil,
          heroAllowsInteraction: Bool? = nil) {
@@ -1673,6 +1677,7 @@ struct CozyDecorLayer: View {
             self.lightAction = lightAction
             self.waterAction = waterAction
             self.playAction = playAction
+            self.plantAction = plantAction
             self.loveboxAction = loveboxAction
             self.galleryAction = galleryAction
             self.decorPlacement = decorPlacement
@@ -1680,6 +1685,7 @@ struct CozyDecorLayer: View {
             self.heroAllowsInteraction = heroAllowsInteraction
             self.waterEnabled = waterEnabled
             self.playEnabled = playEnabled
+            self.plantEnabled = plantEnabled
         }
 
     var body: some View {
@@ -1703,12 +1709,14 @@ struct CozyDecorLayer: View {
         let plantOffset = isTablet ? decorPlacement.plantOffsetFromFloor : decorPlacement.plantOffsetFromFloor * scale
         let waterOffset = isTablet ? decorPlacement.waterOffsetFromFloor : decorPlacement.waterOffsetFromFloor * scale
         let toysOffset  = isTablet ? decorPlacement.toysOffsetFromFloor  : decorPlacement.toysOffsetFromFloor * scale
+        let giftOffset = isTablet ? decorPlacement.giftOffsetFromFloor : decorPlacement.giftOffsetFromFloor * scale
         let heroOffset  = isTablet ?
             decorPlacement.heroOffsetFromFloor :
             decorPlacement.heroOffsetFromFloor * scale * Layout.heroOffsetBoost(for: size)
         let propDrop = Layout.smallPropDrop(for: size)
         let waterInteractable = allowInteractions && waterEnabled
         let playInteractable = allowInteractions && playEnabled
+        let plantInteractable = allowInteractions && plantEnabled
 
         ZStack {
             Rectangle()
@@ -1756,9 +1764,16 @@ struct CozyDecorLayer: View {
                             y: floorY - plantOffset - yLift + propDrop + (isTablet ? Layout.floorVisualPadding : 0),
                             baseWidth: size.width,
                             theme: theme,
-                            action: { hapticSoft() },
-                            isEnabled: false)
-            .allowsHitTesting(false)
+                            action: {
+                                if let plantAction {
+                                    plantAction()
+                                } else {
+                                    hapticSoft()
+                                }
+                            },
+                            isEnabled: plantInteractable)
+            .allowsHitTesting(plantInteractable)
+            .zIndex(1)
 
             InteractiveProp(imageName: "lovebox",
                             width: decorPlacement.loveboxWidth * scale,
@@ -1831,6 +1846,17 @@ struct CozyDecorLayer: View {
                             action: { hapticSoft() },
                             isEnabled: false)
             .allowsHitTesting(false)
+
+            InteractiveProp(imageName: "gift",
+                            width: decorPlacement.giftWidth * scale,
+                            xOffset: decorPlacement.giftXOffset * scaleX,
+                            y: floorY - giftOffset - yLift + propDrop + (isTablet ? Layout.floorVisualPadding : 0),
+                            baseWidth: size.width,
+                            theme: theme,
+                            action: { hapticSoft() },
+                            isEnabled: false)
+            .allowsHitTesting(false)
+            .zIndex(4)
 
             InteractiveProp(imageName: "window",
                             width: decorPlacement.windowWidth * scale,
@@ -2874,6 +2900,9 @@ struct DecorPlacement {
     var windowY: CGFloat = Layout.windowY
     var heroXOffset: CGFloat = Layout.heroXOffset
     var heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor
+    var giftWidth: CGFloat = 80
+    var giftXOffset: CGFloat = -120
+    var giftOffsetFromFloor: CGFloat = 20
 }
 
 extension DecorPlacement {
@@ -2914,7 +2943,10 @@ extension DecorPlacement {
         windowXOffset: CGFloat = Layout.windowXOffset,
         windowY: CGFloat = Layout.windowY,
         heroXOffset: CGFloat = Layout.heroXOffset,
-        heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor
+        heroOffsetFromFloor: CGFloat = Layout.heroOffsetFromFloor,
+        giftWidth: CGFloat = 80,
+        giftXOffset: CGFloat = -120,
+        giftOffsetFromFloor: CGFloat = 20
     ) -> DecorPlacement {
         var placement = DecorPlacement()
         placement.floorWidthFactor = floorWidthFactor
@@ -2945,6 +2977,9 @@ extension DecorPlacement {
         placement.windowY = windowY
         placement.heroXOffset = heroXOffset
         placement.heroOffsetFromFloor = heroOffsetFromFloor
+        placement.giftWidth = giftWidth
+        placement.giftXOffset = giftXOffset
+        placement.giftOffsetFromFloor = giftOffsetFromFloor
         return placement
     }
 }
@@ -3237,66 +3272,83 @@ struct DoodleCanvasView: View {
                 .padding(.vertical, 16)
 
                 // Color picker
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(availableColors, id: \.1) { color, name in
-                            Button(action: {
-                                hapticSoft()
-                                selectedColor = color
-                                updateToolColor()
-                            }) {
-                                Circle()
-                                    .fill(color)
-                                    .frame(width: 40, height: 40)
-                                    .overlay(
-                                        Circle()
-                                            .strokeBorder(
-                                                selectedColor == color ? theme.textPrimary : Color.clear,
-                                                lineWidth: 3
-                                            )
-                                    )
+                GeometryReader { geo in
+                    let isIPad = geo.size.width > 600
+                    let colorSize: CGFloat = isIPad ? 56 : 40
+                    let colorSpacing: CGFloat = isIPad ? 20 : 12
+
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: colorSpacing) {
+                            ForEach(availableColors, id: \.1) { color, name in
+                                Button(action: {
+                                    hapticSoft()
+                                    selectedColor = color
+                                    updateToolColor()
+                                }) {
+                                    Circle()
+                                        .fill(color)
+                                        .frame(width: colorSize, height: colorSize)
+                                        .overlay(
+                                            Circle()
+                                                .strokeBorder(
+                                                    selectedColor == color ? theme.textPrimary : Color.clear,
+                                                    lineWidth: isIPad ? 4 : 3
+                                                )
+                                        )
+                                }
                             }
                         }
+                        .padding(.horizontal, isIPad ? 32 : 20)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .padding(.horizontal, 20)
                 }
+                .frame(height: 70)
                 .padding(.vertical, 12)
 
                 // Brush size slider
-                VStack(spacing: 8) {
-                    HStack {
-                        Text("Brush Size")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(theme.textMuted)
+                GeometryReader { geo in
+                    let isIPad = geo.size.width > 600
 
-                        Spacer()
+                    VStack(spacing: isIPad ? 12 : 8) {
+                        HStack {
+                            Text("Brush Size")
+                                .font(.system(size: isIPad ? 17 : 15, weight: .medium))
+                                .foregroundColor(theme.textMuted)
 
-                        Text("\(Int(brushSize))")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(theme.textPrimary)
-                            .frame(width: 30)
-                    }
+                            Spacer()
 
-                    Slider(value: $brushSize, in: 1...20, step: 1)
-                        .tint(theme.buttonFill)
-                        .onChange(of: brushSize) {
-                            updateToolWidth()
+                            Text("\(Int(brushSize))")
+                                .font(.system(size: isIPad ? 17 : 15, weight: .semibold))
+                                .foregroundColor(theme.textPrimary)
+                                .frame(width: isIPad ? 40 : 30)
                         }
+
+                        Slider(value: $brushSize, in: 1...20, step: 1)
+                            .tint(theme.buttonFill)
+                            .onChange(of: brushSize) {
+                                updateToolWidth()
+                            }
+                    }
+                    .padding(.horizontal, isIPad ? 32 : 20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-                .padding(.horizontal, 20)
+                .frame(height: 60)
                 .padding(.vertical, 12)
 
                 // Drawing canvas - always square
                 GeometryReader { geo in
-                    let availableWidth = geo.size.width - 40
-                    let canvasSize = min(availableWidth, 500)
+                    let isIPad = geo.size.width > 600
+                    let availableWidth = geo.size.width - (isIPad ? 80 : 40)
+                    let maxCanvasSize: CGFloat = isIPad ? 700 : 500
+                    let canvasSize = min(availableWidth, maxCanvasSize)
 
                     VStack {
                         Spacer()
                         CanvasViewWrapper(canvasView: canvasViewModel.canvas)
                             .frame(width: canvasSize, height: canvasSize)
                             .background(Color.white)
-                            .cornerRadius(16)
+                            .cornerRadius(isIPad ? 20 : 16)
+                            .shadow(color: Color.black.opacity(0.1), radius: isIPad ? 20 : 10, x: 0, y: 5)
                         Spacer()
                     }
                     .frame(maxWidth: .infinity)
@@ -3305,27 +3357,43 @@ struct DoodleCanvasView: View {
                 .padding(.top, 12)
 
                 // Undo/Redo buttons
-                HStack(spacing: 24) {
-                    Button(action: {
-                        hapticSoft()
-                        canvasViewModel.undo()
-                    }) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundColor(canvasViewModel.canUndo ? theme.textPrimary : theme.textMuted.opacity(0.3))
-                    }
-                    .disabled(!canvasViewModel.canUndo)
+                GeometryReader { geo in
+                    let isIPad = geo.size.width > 600
 
-                    Button(action: {
-                        hapticSoft()
-                        canvasViewModel.redo()
-                    }) {
-                        Image(systemName: "arrow.uturn.forward")
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundColor(canvasViewModel.canRedo ? theme.textPrimary : theme.textMuted.opacity(0.3))
+                    HStack(spacing: isIPad ? 32 : 24) {
+                        Button(action: {
+                            hapticSoft()
+                            canvasViewModel.undo()
+                        }) {
+                            Image(systemName: "arrow.uturn.backward")
+                                .font(.system(size: isIPad ? 28 : 24, weight: .medium))
+                                .foregroundColor(canvasViewModel.canUndo ? theme.textPrimary : theme.textMuted.opacity(0.3))
+                                .frame(width: isIPad ? 60 : 44, height: isIPad ? 60 : 44)
+                                .background(
+                                    Circle()
+                                        .fill(canvasViewModel.canUndo ? theme.textPrimary.opacity(0.08) : Color.clear)
+                                )
+                        }
+                        .disabled(!canvasViewModel.canUndo)
+
+                        Button(action: {
+                            hapticSoft()
+                            canvasViewModel.redo()
+                        }) {
+                            Image(systemName: "arrow.uturn.forward")
+                                .font(.system(size: isIPad ? 28 : 24, weight: .medium))
+                                .foregroundColor(canvasViewModel.canRedo ? theme.textPrimary : theme.textMuted.opacity(0.3))
+                                .frame(width: isIPad ? 60 : 44, height: isIPad ? 60 : 44)
+                                .background(
+                                    Circle()
+                                        .fill(canvasViewModel.canRedo ? theme.textPrimary.opacity(0.08) : Color.clear)
+                                )
+                        }
+                        .disabled(!canvasViewModel.canRedo)
                     }
-                    .disabled(!canvasViewModel.canRedo)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+                .frame(height: 80)
                 .padding(.vertical, 20)
                 .padding(.bottom, 8)
             }
