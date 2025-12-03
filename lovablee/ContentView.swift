@@ -1958,6 +1958,9 @@ struct CozyDecorLayer: View {
     let decorPlacement: DecorPlacement
     let heroAction: (() -> Void)?
     let heroAllowsInteraction: Bool?
+    let userName: String?
+    let partnerName: String?
+    let togetherSince: Date?
 
     init(size: CGSize,
          theme: PaletteTheme,
@@ -1975,7 +1978,10 @@ struct CozyDecorLayer: View {
          plantEnabled: Bool = true,
          decorPlacement: DecorPlacement = .onboarding,
          heroAction: (() -> Void)? = nil,
-         heroAllowsInteraction: Bool? = nil) {
+         heroAllowsInteraction: Bool? = nil,
+         userName: String? = nil,
+         partnerName: String? = nil,
+         togetherSince: Date? = nil) {
             self.size = size
             self.theme = theme
             self.isLightsOut = isLightsOut
@@ -1993,6 +1999,9 @@ struct CozyDecorLayer: View {
             self.waterEnabled = waterEnabled
             self.playEnabled = playEnabled
             self.plantEnabled = plantEnabled
+            self.userName = userName
+            self.partnerName = partnerName
+            self.togetherSince = togetherSince
         }
 
     var body: some View {
@@ -2184,6 +2193,44 @@ struct CozyDecorLayer: View {
                           y: floorY - heroOffset + (isTablet ? Layout.floorVisualPadding : 0))
             .zIndex(6)
             .allowsHitTesting(heroAllowsInteraction ?? allowInteractions)
+
+            // Couple names and anniversary display
+            if let userName = userName, let partnerName = partnerName {
+                VStack(spacing: 6) {
+                    // Couple names with heart
+                    HStack(spacing: 6) {
+                        Text(userName)
+                            .font(.system(.title3, weight: .semibold))
+                            .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+
+                        Image(systemName: "heart.fill")
+                            .font(.system(.body, weight: .semibold))
+                            .foregroundStyle(Color.pink.opacity(isLightsOut ? 0.9 : 1.0))
+                            .fixedSize()
+
+                        Text(partnerName)
+                            .font(.system(.title3, weight: .semibold))
+                            .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .frame(maxWidth: size.width * 0.8)
+
+                    // Days together
+                    if let togetherSince = togetherSince {
+                        let daysTogether = Calendar.current.dateComponents([.day], from: togetherSince, to: Date()).day ?? 0
+                        Text("\(daysTogether) days together")
+                            .font(.system(.callout, weight: .medium))
+                            .foregroundStyle(isLightsOut ? Color.white.opacity(0.8) : theme.textMuted)
+                            .lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: size.width * 0.85)
+                .position(x: size.width * 0.5, y: size.height * 0.56)
+                .zIndex(100)
+            }
         }
     }
 }

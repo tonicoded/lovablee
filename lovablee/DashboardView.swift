@@ -69,6 +69,7 @@ struct DashboardView: View {
     @State private var isDoodlesLoading = false
     @State private var activityRefreshTimer: AnyCancellable?
     @State private var showSettings = false
+    @State private var togetherSinceDate: Date? = nil
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -135,7 +136,22 @@ struct DashboardView: View {
                                    heroAction: {
                                         openPetSheet()
                                    },
-                                   heroAllowsInteraction: true)
+                                   heroAllowsInteraction: true,
+                                   userName: name,
+                                   partnerName: partnerName,
+                                   togetherSince: togetherSinceDate)
+                        .task(id: partnerName) {
+                            // Load anniversary data when home tab appears and partner is available
+                            guard partnerName != nil, let onLoadAnniversaries else { return }
+                            do {
+                                let result = try await onLoadAnniversaries()
+                                await MainActor.run {
+                                    togetherSinceDate = result.togetherSince
+                                }
+                            } catch {
+                                print("Failed to load anniversary data: \(error)")
+                            }
+                        }
                 } else {
                     backgroundGradient(isDark: isLightsOut)
                         .ignoresSafeArea()

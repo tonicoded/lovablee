@@ -18,7 +18,7 @@ struct LovableeWidget: Widget {
         }
         .configurationDisplayName("Partner's Doodle")
         .description("See the latest doodle from your partner")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemSmall, .systemLarge])
     }
 }
 
