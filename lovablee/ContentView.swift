@@ -179,6 +179,11 @@ struct ContentView: View {
                     ensureLatestUserRecordIfMissing()
                     startProfileAutoRefresh()
                     checkForUnopenedGifts()
+                    // Sync widget with latest doodle
+                    Task {
+                        await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+                        WidgetCenter.shared.reloadAllTimelines()
+                    }
                 }
             }
         }
@@ -216,6 +221,11 @@ struct ContentView: View {
                 ensureLatestUserRecordIfMissing(force: true)
                 checkForUnopenedGifts()
                 startProfileAutoRefresh()
+                // Force widget sync when entering dashboard
+                Task {
+                    await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+                    WidgetCenter.shared.reloadAllTimelines()
+                }
             }
             if newStage != .dashboard {
                 stopProfileAutoRefresh()
@@ -467,6 +477,12 @@ struct ContentView: View {
             print("📝 Saving to database with base64 content...")
             let doodle = try await SupabaseAuthService.shared.saveDoodle(session: session, content: content)
             print("📝 Database save successful!")
+
+            // Update widget with saved doodle
+            Task {
+                await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
+            }
+
             return doodle
         }
     }
@@ -2196,10 +2212,12 @@ struct CozyDecorLayer: View {
 
             // Couple names and anniversary display
             if let userName = userName, let partnerName = partnerName {
+                let userInitial = userName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1).uppercased()
+                let partnerInitial = partnerName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1).uppercased()
                 VStack(spacing: 6) {
                     // Couple names with heart
                     HStack(spacing: 6) {
-                        Text(userName)
+                        Text(userInitial)
                             .font(.system(.title3, weight: .semibold))
                             .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
                             .lineLimit(1)
@@ -2210,7 +2228,7 @@ struct CozyDecorLayer: View {
                             .foregroundStyle(Color.pink.opacity(isLightsOut ? 0.9 : 1.0))
                             .fixedSize()
 
-                        Text(partnerName)
+                        Text(partnerInitial)
                             .font(.system(.title3, weight: .semibold))
                             .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
                             .lineLimit(1)

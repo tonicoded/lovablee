@@ -18,7 +18,7 @@ struct LovableeWidget: Widget {
         }
         .configurationDisplayName("Partner's Doodle")
         .description("See the latest doodle from your partner")
-        .supportedFamilies([.systemSmall, .systemLarge])
+        .supportedFamilies([.systemSmall, .systemMedium])
     }
 }
 
@@ -107,14 +107,22 @@ struct DoodleTimelineProvider: TimelineProvider {
     }
 
     private func fetchLatestDoodle() async -> DoodleEntry {
+        print("🔍 Widget: Attempting to load cached doodle...")
         // Try to load from shared storage first (for quick display)
         if let cachedData = WidgetDataStore.shared.loadLatestDoodle() {
+            print("✅ Widget: Found cached doodle from \(cachedData.partnerName), size: \(cachedData.imageData.count) bytes")
+            if UIImage(data: cachedData.imageData) != nil {
+                print("✅ Widget: Image data is valid")
+            } else {
+                print("❌ Widget: Image data is corrupted!")
+            }
             return DoodleEntry(
                 date: Date(),
                 doodleImageData: cachedData.imageData,
                 partnerName: cachedData.partnerName
             )
         }
+        print("❌ Widget: No cached doodle found")
 
         // If no cached data, try to fetch from server
         do {

@@ -1,5 +1,6 @@
 import Foundation
 import WidgetKit
+import UIKit
 
 struct WidgetSessionData: Codable {
     let accessToken: String
@@ -86,15 +87,53 @@ class WidgetDataStore {
 
     // MARK: - Doodle Data Management
 
+    private func resizeImageForWidget(_ imageData: Data) -> Data? {
+        guard let image = UIImage(data: imageData) else { return nil }
+
+        // Widget max area is ~822935 pixels. Use 500x500 (250000 pixels) for small widgets
+        let maxDimension: CGFloat = 500
+        let size = image.size
+
+        // If image is already small enough, return as-is
+        if size.width <= maxDimension && size.height <= maxDimension {
+            return imageData
+        }
+
+        // Calculate new size maintaining aspect ratio
+        let aspectRatio = size.width / size.height
+        var newSize: CGSize
+
+        if size.width > size.height {
+            newSize = CGSize(width: maxDimension, height: maxDimension / aspectRatio)
+        } else {
+            newSize = CGSize(width: maxDimension * aspectRatio, height: maxDimension)
+        }
+
+        // Resize image
+        UIGraphicsBeginImageContextWithOptions(newSize, false, 1.0)
+        image.draw(in: CGRect(origin: .zero, size: newSize))
+        let resizedImage = UIGraphicsGetImageFromCurrentImageContext()
+        UIGraphicsEndImageContext()
+
+        return resizedImage?.pngData()
+    }
+
     func saveLatestDoodle(imageData: Data, partnerName: String) {
+        // Resize image to fit widget limits
+        guard let resizedImageData = resizeImageForWidget(imageData) else {
+            print("⚠️ Failed to resize image for widget")
+            return
+        }
+
         let doodleData = WidgetDoodleData(
-            imageData: imageData,
+            imageData: resizedImageData,
             partnerName: partnerName,
             timestamp: Date()
         )
 
         if let encoded = try? JSONEncoder().encode(doodleData) {
             sharedDefaults?.set(encoded, forKey: doodleKey)
+            print("✅ Saved doodle for widget (resized to \(resizedImageData.count) bytes)")
         }
 
         // Reload all widget timelines after saving doodle
