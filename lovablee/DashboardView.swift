@@ -31,6 +31,12 @@ struct DashboardView: View {
     var loadLoveNotes: (() async throws -> [LoveNote])? = nil
     var onSaveDoodle: ((UIImage) async throws -> Void)? = nil
     var loadDoodles: (() async throws -> [Doodle])? = nil
+    var onPublishLiveDoodle: ((UIImage) async throws -> Void)? = nil
+    var onFetchLiveDoodle: (() async throws -> LiveDoodle?)? = nil
+    var onGetCoupleKey: (() async throws -> String?)? = nil
+    var supabaseURL: URL?
+    var supabaseAnonKey: String?
+    var supabaseAccessToken: String?
     var onSendGift: ((String, String) async throws -> Void)? = nil
     var loadGifts: (() async throws -> [PurchasedGift])? = nil
     var userEmail: String?
@@ -49,6 +55,7 @@ struct DashboardView: View {
     @State private var isLoveboxInboxPresented = false
     @State private var isDoodleSheetPresented = false
     @State private var isDoodleGalleryPresented = false
+    @State private var isLiveDoodlePresented = false
     @State private var isGiftsSheetPresented = false
     @State private var cooldownAlert: CooldownAlert?
     @State private var petStatus: SupabasePetStatus?
@@ -122,12 +129,15 @@ struct DashboardView: View {
                                    },
                                    playAction: {
                                         triggerPetShortcut(.play)
-                                   },
+                                  },
                                    plantAction: {
                                         openPlantSheet()
                                    },
                                    loveboxAction: {
-                                        isLoveboxInboxPresented = true
+                                       isLoveboxInboxPresented = true
+                                  },
+                                   tvAction: {
+                                        isLiveDoodlePresented = true
                                    },
                                    galleryAction: {
                                         isDoodleGalleryPresented = true
@@ -136,9 +146,9 @@ struct DashboardView: View {
                                     },
                                    windowAction: {
                                         openMoodView()
-                                   },
-                                   giftAction: {
-                                        Task {
+                                  },
+                                    giftAction: {
+                                         Task {
                                             await refreshPetStatusAsync()
                                             await MainActor.run {
                                                 isGiftsSheetPresented = true
@@ -511,6 +521,22 @@ struct DashboardView: View {
                 .onAppear {
                     refreshDoodles(force: true)
                 }
+            }
+            .fullScreenCover(isPresented: $isLiveDoodlePresented) {
+                DoodleLiveLockScreenView(
+                    userName: name,
+                    partnerName: partnerName,
+                    userId: userIdentifier,
+                    coupleKey: pairingCode,
+                    onSaveDoodle: onSaveDoodle,
+                    loadDoodles: loadDoodles,
+                    onPublishLive: onPublishLiveDoodle,
+                    onFetchLive: onFetchLiveDoodle,
+                    onGetCoupleKey: onGetCoupleKey,
+                    supabaseURL: supabaseURL,
+                    supabaseAnonKey: supabaseAnonKey,
+                    accessToken: supabaseAccessToken
+                )
             }
             .fullScreenCover(isPresented: $isMoodViewPresented) {
                 MoodScreen(

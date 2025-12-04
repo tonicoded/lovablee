@@ -155,6 +155,18 @@ struct ContentView: View {
                               loadDoodles: {
                                   try await loadDoodlesFromServer()
                               },
+                              onPublishLiveDoodle: { image in
+                                  try await publishLiveDoodle(image: image)
+                              },
+                              onFetchLiveDoodle: {
+                                  try await fetchLatestLiveDoodle()
+                              },
+                              onGetCoupleKey: {
+                                  try await fetchCoupleKey()
+                              },
+                              supabaseURL: SupabaseAuthService.shared.publicProjectURL,
+                              supabaseAnonKey: SupabaseAuthService.shared.publicAnonKey,
+                              supabaseAccessToken: supabaseSession?.accessToken,
                               onSendGift: { giftType, message in
                                   _ = try await sendGift(giftType: giftType, message: message)
                               },
@@ -496,6 +508,34 @@ struct ContentView: View {
     private func loadDoodlesFromServer() async throws -> [Doodle] {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.getDoodles(session: session, limit: 50)
+        }
+    }
+
+    private func publishLiveDoodle(image: UIImage) async throws {
+        try await performWithFreshSession { session in
+            guard let pngData = image.pngData() else { return }
+            let base64 = pngData.base64EncodedString()
+            let content = "data:image/png;base64,\(base64)"
+            try await SupabaseAuthService.shared.publishLiveDoodle(
+                session: session,
+                senderName: profileName.isEmpty ? nil : profileName,
+                contentBase64: content
+            )
+        }
+    }
+
+    private func fetchLatestLiveDoodle() async throws -> LiveDoodle? {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.fetchLatestLiveDoodle(
+                session: session,
+                excludeSenderId: session.user.id
+            )
+        }
+    }
+
+    private func fetchCoupleKey() async throws -> String? {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.getCoupleKey(session: session)
         }
     }
 
@@ -1984,6 +2024,7 @@ struct CozyDecorLayer: View {
     let playAction: (() -> Void)?
     let plantAction: (() -> Void)?
     let loveboxAction: (() -> Void)?
+    let tvAction: (() -> Void)?
     let galleryAction: (() -> Void)?
     let windowAction: (() -> Void)?
     let giftAction: (() -> Void)?
@@ -2006,6 +2047,7 @@ struct CozyDecorLayer: View {
         playAction: (() -> Void)? = nil,
         plantAction: (() -> Void)? = nil,
         loveboxAction: (() -> Void)? = nil,
+        tvAction: (() -> Void)? = nil,
         galleryAction: (() -> Void)? = nil,
         windowAction: (() -> Void)? = nil,
         giftAction: (() -> Void)? = nil,
@@ -2027,6 +2069,7 @@ struct CozyDecorLayer: View {
             self.playAction = playAction
             self.plantAction = plantAction
             self.loveboxAction = loveboxAction
+            self.tvAction = tvAction
             self.galleryAction = galleryAction
             self.windowAction = windowAction
             self.giftAction = giftAction
@@ -2142,9 +2185,15 @@ struct CozyDecorLayer: View {
                             y: decorPlacement.tvY * scale + propDrop,
                             baseWidth: size.width,
                             theme: theme,
-                            action: { hapticSoft() },
-                            isEnabled: false)
-            .allowsHitTesting(false)
+                            action: {
+                                if let tvAction {
+                                    tvAction()
+                                } else {
+                                    hapticSoft()
+                                }
+                            },
+                            isEnabled: allowInteractions && tvAction != nil)
+            .allowsHitTesting(allowInteractions && tvAction != nil)
 
             InteractiveProp(imageName: "water",
                             width: decorPlacement.waterWidth * scale,
@@ -2535,6 +2584,9 @@ private final class SupabaseAuthService {
     private let clientId = "com.anthony.lovablee"
     private let usersTablePath = "rest/v1/users"
     private let storageBucketPath = "storage"
+
+    var publicProjectURL: URL { projectURL }
+    var publicAnonKey: String { anonKey }
 
     private func validateResponse(_ data: Data,
                                   _ response: URLResponse,
@@ -2987,6 +3039,70 @@ private final class SupabaseAuthService {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         decoder.dateDecodingStrategy = .iso8601
         return try decoder.decode([Doodle].self, from: data)
+    }
+
+    func publishLiveDoodle(session: SupabaseSession,
+                           senderName: String?,
+                           contentBase64: String) async throws {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/publish_live_doodle"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+
+        let body: [String: Any?] = [
+            "p_content_base64": contentBase64,
+            "p_sender_name": senderName
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+    }
+
+    func fetchLatestLiveDoodle(session: SupabaseSession,
+                               excludeSenderId: String?) async throws -> LiveDoodle? {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/fetch_latest_live_doodle"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let body: [String: Any?] = [
+            "p_exclude_sender": excludeSenderId
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+        // Prefer strict decode; fall back to manual parsing so we never silently drop a valid record.
+        let decoder = JSONDecoder.liveDoodle
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        if let doodle = try? decoder.decode(LiveDoodle?.self, from: data) {
+            return doodle
+        }
+
+        // Manual fallback to survive format drift (e.g., timestamps).
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        return LiveDoodleParser.parse(json: json)
+    }
+
+    func getCoupleKey(session: SupabaseSession) async throws -> String? {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/get_couple_key"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = Data("{}".utf8)
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+        return String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\"", with: "")
     }
 
     func sendGift(session: SupabaseSession, giftType: String, message: String) async throws -> PurchasedGift {
@@ -4192,7 +4308,7 @@ struct DoodleCanvasView: View {
 
                         Slider(value: $brushSize, in: 1...20, step: 1)
                             .tint(theme.buttonFill)
-                            .onChange(of: brushSize) {
+                            .onChange(of: brushSize) { _, _ in
                                 updateToolWidth()
                             }
                     }
@@ -4205,7 +4321,7 @@ struct DoodleCanvasView: View {
                 // Drawing canvas - always square
                 GeometryReader { geo in
                     let isIPad = geo.size.width > 600
-                    let availableWidth = geo.size.width - (isIPad ? 80 : 40)
+                    let availableWidth = max(0, geo.size.width - (isIPad ? 80 : 40))
                     let maxCanvasSize: CGFloat = isIPad ? 700 : 500
                     let canvasSize = min(availableWidth, maxCanvasSize)
 
@@ -4318,27 +4434,51 @@ class CanvasViewModel: ObservableObject {
         updateTrigger.toggle()
     }
 
+    func clear() {
+        canvas.drawing = PKDrawing()
+        updateTrigger.toggle()
+    }
+
     func captureSnapshot() -> UIImage? {
-        // Capture the entire canvas view as displayed
-        let renderer = UIGraphicsImageRenderer(size: canvas.bounds.size)
-        return renderer.image { context in
-            canvas.drawHierarchy(in: canvas.bounds, afterScreenUpdates: true)
-        }
+        let bounds = canvas.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
+        // Use PKDrawing's rasterization to avoid heavy view hierarchy rendering (keeps strokes smooth).
+        return canvas.drawing.image(from: bounds, scale: UIScreen.main.scale)
     }
 }
 
 // MARK: - Canvas View Wrapper
 struct CanvasViewWrapper: UIViewRepresentable {
     let canvasView: PKCanvasView
+    var onDrawingChanged: ((PKDrawing) -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
 
     func makeUIView(context: Context) -> PKCanvasView {
         canvasView.drawingPolicy = .anyInput
-        canvasView.backgroundColor = .white
+        if canvasView.backgroundColor == nil {
+            canvasView.backgroundColor = .white
+        }
+        canvasView.delegate = context.coordinator
         return canvasView
     }
 
     func updateUIView(_ uiView: PKCanvasView, context: Context) {
-        // No updates needed
+        uiView.delegate = context.coordinator
+    }
+
+    final class Coordinator: NSObject, PKCanvasViewDelegate {
+        var parent: CanvasViewWrapper
+
+        init(parent: CanvasViewWrapper) {
+            self.parent = parent
+        }
+
+        func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+            parent.onDrawingChanged?(canvasView.drawing)
+        }
     }
 }
 

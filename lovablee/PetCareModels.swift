@@ -147,6 +147,24 @@ struct Doodle: Codable, Identifiable {
     }
 }
 
+struct LiveDoodle: Codable, Identifiable {
+    let id: UUID
+    let coupleKey: String
+    let senderId: String
+    let senderName: String?
+    let contentBase64: String
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case coupleKey = "couple_key"
+        case senderId = "sender_id"
+        case senderName = "sender_name"
+        case contentBase64 = "content_base64"
+        case createdAt = "created_at"
+    }
+}
+
 struct SupabaseActivityItem: Codable, Identifiable {
     let id: UUID
     let coupleKey: String?
