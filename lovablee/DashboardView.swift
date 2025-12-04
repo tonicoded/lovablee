@@ -39,6 +39,8 @@ struct DashboardView: View {
     var onSetTogetherSince: ((Date) async throws -> Void)? = nil
     var onAddCustomAnniversary: ((String, Date) async throws -> Anniversary)? = nil
     var onDeleteCustomAnniversary: ((UUID) async throws -> Void)? = nil
+    var onLoadMoods: ((Date) async throws -> MoodPair)? = nil
+    var onSetMood: ((MoodOption, Date) async throws -> MoodEntry)? = nil
     @State private var activeTab: DashboardNavTab = .home
     @State private var keyboardHeight: CGFloat = 0
     @State private var isPetSheetPresented = false
@@ -67,10 +69,19 @@ struct DashboardView: View {
     @State private var isActivityLoading = false
     @State private var isLoveNotesLoading = false
     @State private var isDoodlesLoading = false
+    @State private var isMoodLoading = false
+    @State private var myMood: MoodEntry?
+    @State private var partnerMood: MoodEntry?
+    @State private var isMoodViewPresented = false
     @State private var activityRefreshTimer: AnyCancellable?
     @State private var showSettings = false
     @State private var togetherSinceDate: Date? = nil
     @Environment(\.scenePhase) private var scenePhase
+
+    private var canEditMoodToday: Bool {
+        guard let myMood else { return true }
+        return !Calendar.current.isDate(myMood.moodDate, inSameDayAs: Date())
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -120,6 +131,11 @@ struct DashboardView: View {
                                    },
                                    galleryAction: {
                                         isDoodleGalleryPresented = true
+                                        refreshDoodles(force: true)
+                                        refreshMoods()
+                                    },
+                                   windowAction: {
+                                        openMoodView()
                                    },
                                    giftAction: {
                                         Task {
@@ -199,6 +215,9 @@ struct DashboardView: View {
                                                  isGiftsSheetPresented = true
                                              }
                                          }
+                                     },
+                                     onMood: {
+                                         openMoodView()
                                      })
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
@@ -493,6 +512,27 @@ struct DashboardView: View {
                     refreshDoodles(force: true)
                 }
             }
+            .fullScreenCover(isPresented: $isMoodViewPresented) {
+                MoodScreen(
+                    theme: theme,
+                    isLightsOut: isLightsOut,
+                    userName: name,
+                    partnerName: partnerName,
+                    myMood: myMood,
+                    partnerMood: partnerMood,
+                    isLoading: isMoodLoading,
+                    canEditToday: canEditMoodToday,
+                    onClose: {
+                        isMoodViewPresented = false
+                    },
+                    onSelectMood: { option in
+                        submitMood(option: option)
+                    }
+                )
+                .onAppear {
+                    refreshMoods()
+                }
+            }
             .sheet(isPresented: $isGiftsSheetPresented) {
                 GiftsView(
                     currentHearts: Binding(
@@ -630,6 +670,7 @@ struct DashboardView: View {
             updateWidgetWithLatestDoodle()
             // Then refresh doodles in background
             refreshDoodles(force: true)
+            refreshMoods()
             startStatusTimer()
             startActivityTimer()
         }
@@ -661,6 +702,7 @@ struct DashboardView: View {
                 print("🎨 App came to foreground - refreshing doodles for widget")
                 updateWidgetWithLatestDoodle()
                 refreshDoodles(force: true)
+                refreshMoods()
             }
         }
     }
@@ -794,6 +836,65 @@ struct DashboardView: View {
             } catch {
                 await MainActor.run {
                     self.isDoodlesLoading = false
+                }
+            }
+        }
+    }
+
+    private func refreshMoods(for date: Date = Date()) {
+        guard let loader = onLoadMoods else { return }
+        isMoodLoading = true
+        let day = Calendar.current.startOfDay(for: date)
+        Task {
+            do {
+                let pair = try await loader(day)
+                await MainActor.run {
+                    self.myMood = pair.myMood
+                    self.partnerMood = pair.partnerMood
+                    self.isMoodLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isMoodLoading = false
+                    print("❌ Failed to load moods: \(error)")
+                }
+            }
+        }
+    }
+
+    private func openMoodView() {
+        isMoodViewPresented = true
+        refreshMoods()
+    }
+
+    private func submitMood(option: MoodOption) {
+        guard canEditMoodToday else {
+            onPetAlert?("Already checked in", "You can update your mood again after midnight.")
+            return
+        }
+        guard let setter = onSetMood else { return }
+        isMoodLoading = true
+        let day = Calendar.current.startOfDay(for: Date())
+        Task {
+            do {
+                let entry = try await setter(option, day)
+                if let loader = onLoadMoods {
+                    let pair = try await loader(day)
+                    await MainActor.run {
+                        self.myMood = entry
+                        self.partnerMood = pair.partnerMood
+                        self.isMoodLoading = false
+                    }
+                } else {
+                    await MainActor.run {
+                        self.myMood = entry
+                        self.isMoodLoading = false
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isMoodLoading = false
+                    print("❌ Failed to set mood: \(error)")
                 }
             }
         }
@@ -1946,6 +2047,7 @@ private struct ShortcutsTabView: View {
     let onNote: () -> Void
     let onDoodle: () -> Void
     let onGift: () -> Void
+    let onMood: () -> Void
 
     private struct ShortcutItem: Identifiable {
         let id = UUID()
@@ -1965,6 +2067,11 @@ private struct ShortcutsTabView: View {
 
     private var shortcutItems: [ShortcutItem] {
         [
+            ShortcutItem(icon: "face.smiling",
+                         title: "Set your mood",
+                         subtitle: "Share how you feel today",
+                         tint: Color(red: 0.89, green: 0.55, blue: 0.98),
+                         action: onMood),
             ShortcutItem(icon: "drop.fill",
                          title: "Give \(dogName) water",
                          subtitle: "Improve mood",
@@ -4724,6 +4831,223 @@ private struct DoodleCard: View {
     }
 }
 
+// MARK: - Mood Views
+
+private struct MoodScreen: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let userName: String?
+    let partnerName: String?
+    let myMood: MoodEntry?
+    let partnerMood: MoodEntry?
+    let isLoading: Bool
+    let canEditToday: Bool
+    let onClose: () -> Void
+    let onSelectMood: (MoodOption) -> Void
+
+    @State private var showPicker = false
+
+    var body: some View {
+        ZStack {
+            backgroundGradient(isDark: isLightsOut)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                HStack {
+                    Button(action: {
+                        hapticSoft()
+                        onClose()
+                    }) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundColor(theme.textPrimary)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Mood")
+                        .font(.system(.largeTitle, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                    Text("Check in once a day — resets at midnight.")
+                        .font(.system(.subheadline))
+                        .foregroundColor(theme.textMuted)
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+
+                if isLoading {
+                    Spacer()
+                    ProgressView().tint(theme.textPrimary)
+                    Spacer()
+                } else {
+                    ScrollView {
+                        VStack(spacing: 14) {
+                            HStack(spacing: 14) {
+                                MoodCardView(
+                                    title: "Your mood",
+                                    name: userName ?? "You",
+                                    mood: myMood,
+                                    theme: theme,
+                                    isLightsOut: isLightsOut,
+                                    isPrimary: true,
+                                    canEdit: canEditToday,
+                                    action: { showPicker = true }
+                                )
+                                MoodCardView(
+                                    title: "Partner",
+                                    name: partnerName ?? "Partner",
+                                    mood: partnerMood,
+                                    theme: theme,
+                                    isLightsOut: isLightsOut,
+                                    isPrimary: false,
+                                    canEdit: false,
+                                    action: {}
+                                )
+                            }
+                            .padding(.horizontal, 16)
+
+                            Text(canEditToday
+                                 ? "Tap your card to set how you feel today. Your partner sees it too."
+                                 : "You’ve already checked in today. Come back after midnight.")
+                                .font(.system(.footnote))
+                                .foregroundColor(theme.textMuted)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
+                        }
+                        .padding(.top, 20)
+                        .padding(.bottom, 32)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showPicker) {
+            MoodPicker(theme: theme, isLightsOut: isLightsOut) { option in
+                showPicker = false
+                onSelectMood(option)
+            }
+            .presentationDetents([.medium, .large])
+        }
+    }
+}
+
+private struct MoodCardView: View {
+    let title: String
+    let name: String
+    let mood: MoodEntry?
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let isPrimary: Bool
+    let canEdit: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Text(title.uppercased())
+                    .font(.system(.caption, weight: .semibold))
+                    .foregroundColor(theme.textMuted)
+                    .tracking(1.0)
+
+                ZStack {
+                    Circle()
+                        .strokeBorder(theme.textMuted.opacity(0.15), lineWidth: 4)
+                        .frame(width: 78, height: 78)
+                    Text(mood?.emoji ?? "🙂")
+                        .font(.system(size: 36))
+                }
+
+                Text(mood?.label ?? "No mood set")
+                    .font(.system(.headline, weight: .semibold))
+                    .foregroundColor(theme.textPrimary)
+                    .lineLimit(1)
+
+                Text(mood != nil ? name : (isPrimary ? "Tap to set mood" : "Not set yet"))
+                    .font(.system(.subheadline))
+                    .foregroundColor(theme.textMuted)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(isPrimary ? theme.buttonFill.opacity(isLightsOut ? 0.1 : 0.2) :
+                         Color.white.opacity(isLightsOut ? 0.08 : 0.95))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(theme.textMuted.opacity(0.08), lineWidth: 1)
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(isPrimary && !canEdit)
+        .opacity(isPrimary && !canEdit ? 0.7 : 1.0)
+    }
+}
+
+private struct MoodPicker: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let onSelect: (MoodOption) -> Void
+
+    var body: some View {
+        ZStack {
+            backgroundGradient(isDark: isLightsOut)
+                .ignoresSafeArea()
+
+            VStack(spacing: 12) {
+                HStack {
+                    Text("How are you feeling?")
+                        .font(.system(.title3, weight: .bold))
+                        .foregroundColor(theme.textPrimary)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 8)
+
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
+                              spacing: 12) {
+                        ForEach(MoodOption.defaults) { option in
+                            Button(action: {
+                                hapticSoft()
+                                onSelect(option)
+                            }) {
+                                VStack(spacing: 6) {
+                                    Text(option.emoji)
+                                        .font(.system(size: 32))
+                                        .padding(10)
+                                        .frame(maxWidth: .infinity)
+                                        .background(
+                                            Circle().fill(theme.buttonFill.opacity(isLightsOut ? 0.2 : 0.25))
+                                        )
+                                    Text(option.title)
+                                        .font(.system(.subheadline, weight: .medium))
+                                        .foregroundColor(theme.textPrimary)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(Color.white.opacity(isLightsOut ? 0.08 : 0.95))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(theme.textMuted.opacity(0.08), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 20)
+                }
+            }
+        }
+    }
+}
+
 // Shared gradient for new pet layout
 private func backgroundGradient(isDark: Bool) -> LinearGradient {
     if isDark {
@@ -4805,4 +5129,3 @@ private struct CooldownAlert: Identifiable {
     let title: String
     let message: String
 }
-

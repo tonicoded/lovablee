@@ -174,6 +174,12 @@ struct ContentView: View {
                               },
                               onDeleteCustomAnniversary: { id in
                                   try await deleteCustomAnniversary(id: id)
+                              },
+                              onLoadMoods: { date in
+                                  try await loadDailyMoods(for: date)
+                              },
+                              onSetMood: { option, date in
+                                  try await setMood(option: option, for: date)
                               })
                 .onAppear {
                     ensureLatestUserRecordIfMissing()
@@ -532,6 +538,18 @@ struct ContentView: View {
     private func deleteCustomAnniversary(id: UUID) async throws {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.deleteCustomAnniversary(session: session, id: id)
+        }
+    }
+
+    private func loadDailyMoods(for date: Date) async throws -> MoodPair {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.loadDailyMoods(session: session, date: date)
+        }
+    }
+
+    private func setMood(option: MoodOption, for date: Date) async throws -> MoodEntry {
+        return try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.setMood(session: session, option: option, date: date)
         }
     }
 
@@ -1967,6 +1985,7 @@ struct CozyDecorLayer: View {
     let plantAction: (() -> Void)?
     let loveboxAction: (() -> Void)?
     let galleryAction: (() -> Void)?
+    let windowAction: (() -> Void)?
     let giftAction: (() -> Void)?
     let waterEnabled: Bool
     let playEnabled: Bool
@@ -1981,14 +2000,15 @@ struct CozyDecorLayer: View {
     init(size: CGSize,
          theme: PaletteTheme,
          isLightsOut: Bool,
-         allowInteractions: Bool,
-         lightAction: (() -> Void)?,
-         waterAction: (() -> Void)? = nil,
-         playAction: (() -> Void)? = nil,
-         plantAction: (() -> Void)? = nil,
-         loveboxAction: (() -> Void)? = nil,
-         galleryAction: (() -> Void)? = nil,
-         giftAction: (() -> Void)? = nil,
+        allowInteractions: Bool,
+        lightAction: (() -> Void)?,
+        waterAction: (() -> Void)? = nil,
+        playAction: (() -> Void)? = nil,
+        plantAction: (() -> Void)? = nil,
+        loveboxAction: (() -> Void)? = nil,
+        galleryAction: (() -> Void)? = nil,
+        windowAction: (() -> Void)? = nil,
+        giftAction: (() -> Void)? = nil,
          waterEnabled: Bool = true,
          playEnabled: Bool = true,
          plantEnabled: Bool = true,
@@ -2008,6 +2028,7 @@ struct CozyDecorLayer: View {
             self.plantAction = plantAction
             self.loveboxAction = loveboxAction
             self.galleryAction = galleryAction
+            self.windowAction = windowAction
             self.giftAction = giftAction
             self.decorPlacement = decorPlacement
             self.heroAction = heroAction
@@ -2195,9 +2216,12 @@ struct CozyDecorLayer: View {
                             y: decorPlacement.windowY * scale,
                             baseWidth: size.width,
                             theme: theme,
-                            action: { hapticSoft() },
-                            isEnabled: false)
-            .allowsHitTesting(false)
+                            action: {
+                                hapticSoft()
+                                windowAction?()
+                            },
+                            isEnabled: allowInteractions && windowAction != nil)
+            .allowsHitTesting(allowInteractions && windowAction != nil)
 
             InteractiveHero(imageName: "bubbaopen",
                             dimmed: isLightsOut,
@@ -3107,6 +3131,244 @@ private final class SupabaseAuthService {
 
         let (data, response) = try await NetworkService.shared.performRequest(request)
         _ = try validateResponse(data, response)
+    }
+
+    func loadDailyMoods(session: SupabaseSession, date: Date) async throws -> MoodPair {
+        let dayString = Self.localDayString(for: date)
+
+        do {
+            return try await fetchMoodPairFromTable(session: session, dayString: dayString)
+        } catch {
+            print("⚠️ Mood table fetch failed, falling back to RPC: \(error)")
+        }
+
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/load_daily_moods"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload = ["p_local_date": dayString]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        if let pair = try? decoder.decode(MoodPair.self, from: data) {
+            return pair
+        }
+        if let pairs = try? decoder.decode([MoodPair].self, from: data),
+           let first = pairs.first {
+            return first
+        }
+        // Fallback: decode from raw JSON object/array
+        if let json = try? JSONSerialization.jsonObject(with: data) {
+            if let dict = json as? [String: Any],
+               let dictData = try? JSONSerialization.data(withJSONObject: dict),
+               let pair = try? decoder.decode(MoodPair.self, from: dictData) {
+                return pair
+            }
+            if let arr = json as? [[String: Any]],
+               let first = arr.first,
+               let firstData = try? JSONSerialization.data(withJSONObject: first),
+               let pair = try? decoder.decode(MoodPair.self, from: firstData) {
+                return pair
+            }
+
+            // Manual fallback to parse loose JSON shapes
+            let parse: (Any) -> MoodEntry? = { value in
+                Self.decodeMoodEntry(from: value, fallbackDate: date, fallbackUserId: session.user.id)
+            }
+            if let dict = json as? [String: Any] {
+                let my = parse(dict["my_mood"] as Any)
+                let partner = parse(dict["partner_mood"] as Any)
+                return MoodPair(myMood: my, partnerMood: partner)
+            }
+            if let arr = json as? [[String: Any]], let first = arr.first {
+                let my = parse(first["my_mood"] as Any)
+                let partner = parse(first["partner_mood"] as Any)
+                return MoodPair(myMood: my, partnerMood: partner)
+            }
+        }
+        return MoodPair(myMood: nil, partnerMood: nil)
+    }
+
+    private func fetchMoodPairFromTable(session: SupabaseSession,
+                                        dayString: String) async throws -> MoodPair {
+        var components = URLComponents(
+            url: projectURL.appendingPathComponent("rest/v1/user_moods"),
+            resolvingAgainstBaseURL: false
+        )
+        components?.queryItems = [
+            URLQueryItem(name: "mood_date", value: "eq.\(dayString)"),
+            URLQueryItem(name: "order", value: "updated_at.desc"),
+            URLQueryItem(
+                name: "select",
+                value: "id,user_id,mood_key,emoji,label,mood_date,created_at,updated_at"
+            )
+        ]
+        guard let url = components?.url else {
+            throw SupabaseAuthError.server("Invalid URL for mood fetch")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        let entries = try Self.decodeMoodEntries(
+            from: data,
+            fallbackDate: DateFormatter.yearMonthDay.date(from: dayString) ?? Date(),
+            fallbackUserId: session.user.id
+        )
+
+        if entries.isEmpty {
+            return MoodPair(myMood: nil, partnerMood: nil)
+        }
+
+        let myMood = entries.first(where: { $0.userId == session.user.id })
+        let partnerMood = entries.first(where: { $0.userId != session.user.id })
+        return MoodPair(myMood: myMood, partnerMood: partnerMood)
+    }
+
+    private static func decodeMoodEntries(from data: Data,
+                                          fallbackDate: Date,
+                                          fallbackUserId: String) throws -> [MoodEntry] {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        if let entries = try? decoder.decode([MoodEntry].self, from: data) {
+            return entries
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) else {
+            throw SupabaseAuthError.server("Failed to decode mood response")
+        }
+
+        if let arr = json as? [Any] {
+            return arr.compactMap { decodeMoodEntry(from: $0,
+                                                    fallbackDate: fallbackDate,
+                                                    fallbackUserId: fallbackUserId) }
+        }
+        if let dict = json as? [String: Any],
+           let entry = decodeMoodEntry(from: dict,
+                                       fallbackDate: fallbackDate,
+                                       fallbackUserId: fallbackUserId) {
+            return [entry]
+        }
+        return []
+    }
+
+    func setMood(session: SupabaseSession,
+                 option: MoodOption,
+                 date: Date) async throws -> MoodEntry {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/set_mood"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let payload: [String: Any] = [
+            "p_mood_key": option.key,
+            "p_emoji": option.emoji,
+            "p_label": option.title,
+            "p_local_date": Self.localDayString(for: date)
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        if let single = try? decoder.decode(MoodEntry.self, from: data) {
+            return single
+        }
+        if let rows = try? decoder.decode([MoodEntry].self, from: data),
+           let first = rows.first {
+            return first
+        }
+        // Fallback: parse JSON manually
+        if let json = try? JSONSerialization.jsonObject(with: data) {
+            var dict: [String: Any]?
+            if let raw = json as? [String: Any] {
+                dict = raw
+            } else if let arr = json as? [[String: Any]], let first = arr.first {
+                dict = first
+            }
+            if let dict {
+                let id = UUID(uuidString: dict["id"] as? String ?? "") ?? UUID()
+                let userId = (dict["user_id"] as? String) ?? session.user.id
+                let moodKey = (dict["mood_key"] as? String) ?? option.key
+                let emoji = dict["emoji"] as? String
+                let label = dict["label"] as? String
+                let moodDateString = dict["mood_date"] as? String ?? DateFormatter.yearMonthDay.string(from: date)
+                let moodDate = DateFormatter.yearMonthDay.date(from: moodDateString) ??
+                    ISO8601DateFormatter().date(from: moodDateString) ??
+                    date
+                let createdAtString = dict["created_at"] as? String
+                let updatedAtString = dict["updated_at"] as? String
+                let createdAt = createdAtString.flatMap { ISO8601DateFormatter().date(from: $0) }
+                let updatedAt = updatedAtString.flatMap { ISO8601DateFormatter().date(from: $0) }
+                return MoodEntry(
+                    id: id,
+                    userId: userId,
+                    moodKey: moodKey,
+                    emoji: emoji,
+                    label: label,
+                    moodDate: moodDate,
+                    createdAt: createdAt,
+                    updatedAt: updatedAt
+                )
+            }
+        }
+        throw SupabaseAuthError.server("Failed to decode mood response")
+    }
+
+    private static func localDayString(for date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let year = components.year ?? 1970
+        let month = components.month ?? 1
+        let day = components.day ?? 1
+        return String(format: "%04d-%02d-%02d", year, month, day)
+    }
+
+    private static func decodeMoodEntry(from raw: Any,
+                                        fallbackDate: Date,
+                                        fallbackUserId: String) -> MoodEntry? {
+        guard let dict = raw as? [String: Any] else { return nil }
+        let id = UUID(uuidString: dict["id"] as? String ?? "") ?? UUID()
+        let userId = (dict["user_id"] as? String)
+            ?? (dict["userId"] as? String)
+            ?? fallbackUserId
+        let moodKey = (dict["mood_key"] as? String)
+            ?? (dict["moodKey"] as? String)
+            ?? "unknown"
+        let emoji = dict["emoji"] as? String
+        let label = dict["label"] as? String
+        let moodDateString = (dict["mood_date"] as? String)
+            ?? (dict["moodDate"] as? String)
+            ?? localDayString(for: fallbackDate)
+        let moodDate = DateFormatter.yearMonthDay.date(from: moodDateString)
+            ?? ISO8601DateFormatter().date(from: moodDateString)
+            ?? fallbackDate
+
+        let createdAtString = dict["created_at"] as? String ?? dict["createdAt"] as? String
+        let createdAt = createdAtString.flatMap { ISO8601DateFormatter().date(from: $0) }
+        let updatedAtString = dict["updated_at"] as? String ?? dict["updatedAt"] as? String
+        let updatedAt = updatedAtString.flatMap { ISO8601DateFormatter().date(from: $0) }
+
+        return MoodEntry(id: id,
+                         userId: userId,
+                         moodKey: moodKey,
+                         emoji: emoji,
+                         label: label,
+                         moodDate: moodDate,
+                         createdAt: createdAt,
+                         updatedAt: updatedAt)
     }
 
     func uploadProfileImage(session: SupabaseSession, imageData: Data) async throws -> String {

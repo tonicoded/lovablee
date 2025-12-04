@@ -167,6 +167,138 @@ struct SupabaseActivityItem: Codable, Identifiable {
     }
 }
 
+// MARK: - Mood Models
+
+struct MoodEntry: Codable, Identifiable {
+    let id: UUID
+    let userId: String
+    let moodKey: String
+    let emoji: String?
+    let label: String?
+    let moodDate: Date
+    let createdAt: Date?
+    let updatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case moodKey = "mood_key"
+        case emoji
+        case label
+        case moodDate = "mood_date"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+
+    init(id: UUID,
+         userId: String,
+         moodKey: String,
+         emoji: String?,
+         label: String?,
+         moodDate: Date,
+         createdAt: Date? = nil,
+         updatedAt: Date? = nil) {
+        self.id = id
+        self.userId = userId
+        self.moodKey = moodKey
+        self.emoji = emoji
+        self.label = label
+        self.moodDate = moodDate
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        userId = try container.decode(String.self, forKey: .userId)
+        moodKey = try container.decode(String.self, forKey: .moodKey)
+        emoji = try container.decodeIfPresent(String.self, forKey: .emoji)
+        label = try container.decodeIfPresent(String.self, forKey: .label)
+
+        let dateString = try container.decode(String.self, forKey: .moodDate)
+        if let dateOnly = DateFormatter.yearMonthDay.date(from: dateString) {
+            moodDate = dateOnly
+        } else if let iso = ISO8601DateFormatter().date(from: dateString) {
+            moodDate = iso
+        } else {
+            throw DecodingError.dataCorruptedError(forKey: .moodDate,
+                                                   in: container,
+                                                   debugDescription: "Invalid date format for mood_date")
+        }
+
+        let createdString = try container.decodeIfPresent(String.self, forKey: .createdAt)
+        if let raw = createdString, let parsed = ISO8601DateFormatter().date(from: raw) {
+            createdAt = parsed
+        } else {
+            createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
+        }
+
+        let updatedString = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        if let raw = updatedString, let parsed = ISO8601DateFormatter().date(from: raw) {
+            updatedAt = parsed
+        } else {
+            updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        }
+    }
+}
+
+struct MoodPair: Codable {
+    let myMood: MoodEntry?
+    let partnerMood: MoodEntry?
+
+    enum CodingKeys: String, CodingKey {
+        case myMood = "my_mood"
+        case partnerMood = "partner_mood"
+    }
+}
+
+struct MoodOption: Identifiable {
+    let id = UUID()
+    let key: String
+    let title: String
+    let emoji: String
+
+    static let defaults: [MoodOption] = [
+        MoodOption(key: "relaxed", title: "Relaxed", emoji: "😌"),
+        MoodOption(key: "calm", title: "Calm", emoji: "😊"),
+        MoodOption(key: "amazing", title: "Amazing", emoji: "🤩"),
+        MoodOption(key: "happy", title: "Happy", emoji: "😃"),
+        MoodOption(key: "joyful", title: "Joyful", emoji: "😄"),
+        MoodOption(key: "excited", title: "Excited", emoji: "😁"),
+        MoodOption(key: "energetic", title: "Energetic", emoji: "⚡️"),
+        MoodOption(key: "playful", title: "Playful", emoji: "😜"),
+        MoodOption(key: "silly", title: "Silly", emoji: "🤪"),
+        MoodOption(key: "focused", title: "Focused", emoji: "🧐"),
+        MoodOption(key: "motivated", title: "Motivated", emoji: "💪"),
+        MoodOption(key: "confident", title: "Confident", emoji: "😎"),
+        MoodOption(key: "creative", title: "Creative", emoji: "🎨"),
+        MoodOption(key: "hopeful", title: "Hopeful", emoji: "🙏"),
+        MoodOption(key: "grateful", title: "Grateful", emoji: "🥰"),
+        MoodOption(key: "content", title: "Content", emoji: "😌"),
+        MoodOption(key: "mindful", title: "Mindful", emoji: "🧘"),
+        MoodOption(key: "peaceful", title: "Peaceful", emoji: "🕊️"),
+        MoodOption(key: "romantic", title: "Romantic", emoji: "💕"),
+        MoodOption(key: "flirty", title: "Flirty", emoji: "😉"),
+        MoodOption(key: "loving", title: "Loving", emoji: "❤️"),
+        MoodOption(key: "smitten", title: "Smitten", emoji: "😍"),
+        MoodOption(key: "sleepy", title: "Sleepy", emoji: "😴"),
+        MoodOption(key: "proud", title: "Proud", emoji: "🥳"),
+        MoodOption(key: "curious", title: "Curious", emoji: "🤔"),
+        MoodOption(key: "cozy", title: "Cozy", emoji: "☕️")
+    ]
+}
+
+extension DateFormatter {
+    static let yearMonthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+}
+
 #if DEBUG
 extension SupabasePetStatus {
     static var preview: SupabasePetStatus {
