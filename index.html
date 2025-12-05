@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>lovablee — your shared pet space</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --cream: #fee8bf;
+            --peach: #fddcbf;
+            --text-primary: #614530;
+            --text-muted: #8a6d52;
+            --button: #fab559;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Sora", "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+            color: var(--text-primary);
+            background: radial-gradient(circle at 20% 20%, rgba(255, 211, 133, 0.35), transparent 32%),
+                        radial-gradient(circle at 80% 10%, rgba(255, 204, 188, 0.35), transparent 28%),
+                        linear-gradient(135deg, var(--cream), var(--peach));
+            min-height: 100vh;
+            overflow: auto;
+        }
+
+        main {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: clamp(20px, 4vw, 56px);
+        }
+
+        .layout {
+            position: relative;
+            width: min(820px, 100%);
+            min-height: calc(100vh - clamp(32px, 7vw, 84px));
+            background: rgba(255, 255, 255, 0.32);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(97, 69, 48, 0.08);
+            border-radius: 24px;
+            padding: clamp(16px, 3vw, 24px);
+            display: grid;
+            align-items: center;
+            grid-template-columns: 1fr 1fr;
+            gap: clamp(14px, 3vw, 22px);
+            box-shadow: 0 16px 40px rgba(97, 69, 48, 0.14);
+        }
+
+        .background-orb {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            border-radius: 28px;
+            background:
+                radial-gradient(circle at 30% 60%, rgba(250, 181, 89, 0.2), transparent 28%),
+                radial-gradient(circle at 85% 30%, rgba(255, 124, 124, 0.15), transparent 24%);
+            z-index: 0;
+        }
+
+        .copy {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            gap: clamp(12px, 1.6vw, 18px);
+            align-items: center;
+            text-align: center;
+        }
+
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.78);
+            border: 1px solid rgba(97, 69, 48, 0.1);
+            width: fit-content;
+            box-shadow: 0 14px 32px rgba(97, 69, 48, 0.14);
+        }
+
+        .brand img {
+            width: 42px;
+            height: 42px;
+            object-fit: cover;
+            border-radius: 12px;
+        }
+
+        .brand span {
+            font-weight: 700;
+            letter-spacing: 0.4px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(30px, 4vw, 48px);
+            line-height: 1.06;
+            letter-spacing: -0.5px;
+            text-transform: lowercase;
+        }
+
+        .lede {
+            margin: 0;
+            color: var(--text-muted);
+            font-size: clamp(15px, 1.6vw, 17px);
+            line-height: 1.55;
+            max-width: 460px;
+            text-transform: lowercase;
+        }
+
+        .cta-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 14px 18px;
+            border-radius: 14px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            transition: transform 160ms ease, box-shadow 180ms ease, background 200ms ease;
+            border: 1px solid transparent;
+            text-transform: lowercase;
+        }
+
+        .btn.primary {
+            background: linear-gradient(135deg, var(--button), #f296a7);
+            color: #2d2018;
+            box-shadow: 0 12px 25px rgba(250, 181, 89, 0.35);
+        }
+
+        .btn.ghost {
+            background: rgba(255, 255, 255, 0.7);
+            color: var(--text-primary);
+            border-color: rgba(97, 69, 48, 0.12);
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 14px 28px rgba(97, 69, 48, 0.18);
+        }
+
+        .visual {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            gap: 8px;
+            align-content: center;
+            justify-items: center;
+        }
+
+        .phone-wrap {
+            position: relative;
+            width: min(260px, 100%);
+        }
+
+        .phone-shadow {
+            position: absolute;
+            inset: -8px;
+            background: radial-gradient(ellipse at 50% 60%, rgba(97, 69, 48, 0.16), transparent 60%);
+            filter: blur(12px);
+            z-index: 0;
+        }
+
+        .phone {
+            position: relative;
+            background: #fefefe;
+            border-radius: 24px;
+            padding: 8px;
+            border: 6px solid #1c1c1c;
+            box-shadow: 0 14px 32px rgba(97, 69, 48, 0.2);
+            overflow: hidden;
+            z-index: 1;
+        }
+
+        video {
+            width: 100%;
+            border-radius: 16px;
+            display: block;
+        }
+
+        .note,
+        .thumbs {
+            display: none;
+        }
+
+        @media (max-width: 960px) {
+            .layout {
+                grid-template-columns: 1fr;
+                width: min(620px, 100%);
+                min-height: calc(100vh - clamp(28px, 6vw, 68px));
+            }
+
+            .copy {
+                align-items: center;
+                text-align: center;
+            }
+
+            .visual {
+                justify-self: center;
+                width: min(320px, 100%);
+            }
+
+            .cta-row {
+                justify-content: center;
+            }
+        }
+
+        @media (max-width: 640px) {
+            body {
+                font-size: 15px;
+            }
+
+            .layout {
+                padding: 18px;
+                gap: 14px;
+                min-height: calc(100vh - 36px);
+            }
+
+            .note {
+                width: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <section class="layout">
+            <div class="background-orb"></div>
+            <div class="copy">
+                <div class="brand">
+                    <img src="lovablee/paywall.gif" alt="lovablee logo">
+                    <span>lovablee</span>
+                </div>
+                <h1>your shared pet, together.</h1>
+                <p class="lede">lovablee is the tiny space that keeps you two in sync with one pet, live doodles, and gentle rituals. android coming soon.</p>
+                <div class="cta-row">
+                    <a class="btn primary" href="#">download for ios</a>
+                    <a class="btn ghost" href="#">android coming soon</a>
+                </div>
+            </div>
+            <div class="visual">
+                <div class="phone-wrap">
+                    <div class="phone-shadow"></div>
+                    <div class="phone">
+                        <video src="video.MP4" autoplay muted loop playsinline></video>
+                    </div>
+                </div>
+                <div class="note">micro prompts · live doodles · widgets · tiny gifts</div>
+                <div class="thumbs">
+                    <img src="lovablee/Assets.xcassets/lovebox.imageset/ChatGPT%20Image%20Nov%2029,%202025%20at%2003_14_23%20PM.png" alt="gift box">
+                    <img src="lovablee/Assets.xcassets/plant.imageset/ChatGPT%20Image%20Nov%2029,%202025%20at%2003_15_02%20PM.png" alt="plant">
+                    <img src="lovablee/Assets.xcassets/water.imageset/ChatGPT%20Image%20Nov%2029,%202025%20at%2003_23_33%20PM.png" alt="water">
+                    <img src="lovablee/Assets.xcassets/star.imageset/ChatGPT%20Image%20Dec%203,%202025%20at%2006_23_01%20PM.png" alt="star">
+                </div>
+            </div>
+        </section>
+    </main>
+    <footer style="width:100%;padding:14px 24px 20px;display:flex;justify-content:center;">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:center;font-family:'Sora','Space Grotesk',system-ui,-apple-system,'Segoe UI',sans-serif;font-size:13px;color:#614530;">
+            <a href="privacy.html" style="color:inherit;text-decoration:none;">privacy policy</a>
+            <span style="opacity:0.35;">·</span>
+            <a href="terms.html" style="color:inherit;text-decoration:none;">terms</a>
+            <span style="opacity:0.35;">·</span>
+            <a href="mailto:anthonyvvza@gmail.com" style="color:inherit;text-decoration:none;">support</a>
+            <span style="opacity:0.35;">·</span>
+            <span style="opacity:0.7;">© lovablee 2025</span>
+        </div>
+    </footer>
+</body>
+</html>

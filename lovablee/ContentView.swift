@@ -44,6 +44,9 @@ struct ContentView: View {
     @State private var partnerPhotoVersion = UUID().uuidString
     @State private var unopenedGift: PurchasedGift?
     @State private var showGiftReceivedModal = false
+    @State private var activityFetchLimit = 6
+    @State private var loveNotesFetchLimit = 6
+    @State private var doodlesFetchLimit = 12
     private let subscriptionManager = SubscriptionManager.shared
     @State private var coupleIsPremium = false
     @State private var couplePremiumUntil: Date?
@@ -203,6 +206,15 @@ struct ContentView: View {
                               },
                               onSetMood: { option, date in
                                   try await setMood(option: option, for: date)
+                              },
+                              onLoadMoreActivity: {
+                                  activityFetchLimit = 50
+                              },
+                              onLoadMoreLoveNotes: {
+                                  loveNotesFetchLimit = 50
+                              },
+                              onLoadMoreDoodles: {
+                                  doodlesFetchLimit = 60
                               })
                 .onAppear {
                     ensureLatestUserRecordIfMissing()
@@ -478,13 +490,13 @@ struct ContentView: View {
     private func loadActivityFromServer() async throws -> [SupabaseActivityItem] {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.fetchCoupleActivity(session: session,
-                                                                     limit: 10)
+                                                                     limit: activityFetchLimit)
         }
     }
 
     private func loadLoveNotesFromServer() async throws -> [LoveNote] {
         return try await performWithFreshSession { session in
-            try await SupabaseAuthService.shared.getLoveNotes(session: session, limit: 10)
+            try await SupabaseAuthService.shared.getLoveNotes(session: session, limit: loveNotesFetchLimit)
         }
     }
 
@@ -519,7 +531,7 @@ struct ContentView: View {
 
     private func loadDoodlesFromServer() async throws -> [Doodle] {
         return try await performWithFreshSession { session in
-            try await SupabaseAuthService.shared.getDoodles(session: session, limit: 50)
+            try await SupabaseAuthService.shared.getDoodles(session: session, limit: doodlesFetchLimit)
         }
     }
 

@@ -62,6 +62,9 @@ struct DashboardView: View {
     var onDeleteCustomAnniversary: ((UUID) async throws -> Void)? = nil
     var onLoadMoods: ((Date) async throws -> MoodPair)? = nil
     var onSetMood: ((MoodOption, Date) async throws -> MoodEntry)? = nil
+    var onLoadMoreActivity: (() -> Void)? = nil
+    var onLoadMoreLoveNotes: (() -> Void)? = nil
+    var onLoadMoreDoodles: (() -> Void)? = nil
     @State private var activeTab: DashboardNavTab = .home
     @State private var keyboardHeight: CGFloat = 0
     @State private var isPetSheetPresented = false
@@ -89,6 +92,9 @@ struct DashboardView: View {
     @State private var activityItems: [SupabaseActivityItem] = []
     @State private var loveNotes: [LoveNote] = []
     @State private var doodles: [Doodle] = []
+    @State private var showAllActivity = false
+    @State private var showAllLoveNotes = false
+    @State private var showAllDoodles = false
     @State private var isActivityLoading = false
     @State private var isLoveNotesLoading = false
     @State private var isDoodlesLoading = false
@@ -102,6 +108,32 @@ struct DashboardView: View {
     @State private var togetherSinceDate: Date? = nil
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     @Environment(\.scenePhase) private var scenePhase
+
+    private let listPreviewLimit = 6
+
+    private var displayedActivity: [SupabaseActivityItem] {
+        showAllActivity ? activityItems : Array(activityItems.prefix(listPreviewLimit))
+    }
+
+    private var displayedLoveNotes: [LoveNote] {
+        showAllLoveNotes ? loveNotes : Array(loveNotes.prefix(listPreviewLimit))
+    }
+
+    private var displayedDoodles: [Doodle] {
+        showAllDoodles ? doodles : Array(doodles.prefix(listPreviewLimit))
+    }
+
+    private var canLoadMoreActivity: Bool {
+        !showAllActivity && activityItems.count >= listPreviewLimit
+    }
+
+    private var canLoadMoreLoveNotes: Bool {
+        !showAllLoveNotes && loveNotes.count >= listPreviewLimit
+    }
+
+    private var canLoadMoreDoodles: Bool {
+        !showAllDoodles && doodles.count >= listPreviewLimit
+    }
 
     private var canEditMoodToday: Bool {
         guard let myMood else { return true }
@@ -299,16 +331,25 @@ struct DashboardView: View {
                     ActivityFeedView(theme: theme,
                                      isLightsOut: isLightsOut,
                                      safeAreaInsets: stableInsets,
-                                     items: activityItems,
-                                     isLoading: isActivityLoading,
-                                     userId: userIdentifier,
-                                     userName: name,
-                                     partnerName: partnerName,
-                                     userPhotoURL: profileImageURL,
-                                     partnerPhotoURL: partnerProfileImageURL,
-                                     onRefresh: {
-                                         refreshActivity(force: true)
-                                     })
+                                    items: displayedActivity,
+                                    isLoading: isActivityLoading,
+                                    userId: userIdentifier,
+                                    userName: name,
+                                    partnerName: partnerName,
+                                    userPhotoURL: profileImageURL,
+                                    partnerPhotoURL: partnerProfileImageURL,
+                                    canLoadMore: canLoadMoreActivity,
+                                    onViewMore: {
+                                        if !showAllActivity {
+                                            showAllActivity = true
+                                        }
+                                        onLoadMoreActivity?()
+                                        refreshActivity(force: true)
+                                    },
+                                    onRefresh: {
+                                        showAllActivity = false
+                                        refreshActivity(force: true)
+                                    })
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
 
@@ -437,7 +478,7 @@ struct DashboardView: View {
                     theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
                     isLightsOut: isLightsOut,
                     safeAreaInsets: stableInsets,
-                    loveNotes: loveNotes,
+                    loveNotes: displayedLoveNotes,
                     isLoading: isLoveNotesLoading,
                     userId: userIdentifier,
                     partnerName: partnerName ?? "Partner",
@@ -446,8 +487,17 @@ struct DashboardView: View {
                         isLoveboxInboxPresented = false
                     },
                     onRefresh: {
+                        showAllLoveNotes = false
                         refreshLoveNotes(force: true)
                     },
+                    onViewMore: {
+                        if !showAllLoveNotes {
+                            showAllLoveNotes = true
+                        }
+                        onLoadMoreLoveNotes?()
+                        refreshLoveNotes(force: true)
+                    },
+                    canLoadMore: canLoadMoreLoveNotes,
                     onComposeAllowed: {
                         isLoveboxInboxPresented = false
                         isLoveNoteSheetPresented = true
@@ -541,14 +591,23 @@ struct DashboardView: View {
                     theme: isLightsOut ? Palette.darkTheme : Palette.lightTheme,
                     isLightsOut: isLightsOut,
                     safeAreaInsets: stableInsets,
-                    doodles: doodles,
+                    doodles: displayedDoodles,
                     isLoading: isDoodlesLoading,
                     userId: userIdentifier,
+                    canLoadMore: canLoadMoreDoodles,
                     getPetStatus: { petStatus },
                     onClose: {
                         isDoodleGalleryPresented = false
                     },
                     onRefresh: {
+                        showAllDoodles = false
+                        refreshDoodles(force: true)
+                    },
+                    onViewMore: {
+                        if !showAllDoodles {
+                            showAllDoodles = true
+                        }
+                        onLoadMoreDoodles?()
                         refreshDoodles(force: true)
                     },
                     onDrawAllowed: {
@@ -2441,6 +2500,8 @@ private struct ActivityFeedView: View {
     let partnerName: String?
     let userPhotoURL: URL?
     let partnerPhotoURL: URL?
+    let canLoadMore: Bool
+    let onViewMore: (() -> Void)?
     let onRefresh: () -> Void
 
     var body: some View {
@@ -2505,6 +2566,24 @@ private struct ActivityFeedView: View {
                                             timestamp: relativeDate(for: item.createdAt),
                                             avatar: avatar(for: item),
                                             accent: accent(for: item))
+                            }
+
+                            if canLoadMore {
+                                Button {
+                                    hapticSoft()
+                                    onViewMore?()
+                                } label: {
+                                    Text("View more")
+                                        .font(.system(.footnote, weight: .semibold))
+                                        .padding(.vertical, 10)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(isLightsOut ? 0.1 : 0.85))
+                                )
+                                .padding(.horizontal, 6)
                             }
 
                             if isLoading {
@@ -2870,6 +2949,8 @@ private struct LoveboxInboxViewWrapper: View {
     let getPetStatus: () -> SupabasePetStatus?
     let onClose: () -> Void
     let onRefresh: () -> Void
+    let onViewMore: () -> Void
+    let canLoadMore: Bool
     let onComposeAllowed: () -> Void
     let onRefreshStatus: () async -> Void
 
@@ -2887,6 +2968,8 @@ private struct LoveboxInboxViewWrapper: View {
             partnerName: partnerName,
             onClose: onClose,
             onRefresh: onRefresh,
+            onViewMore: onViewMore,
+            canLoadMore: canLoadMore,
             onCompose: {
                 Task {
                     await onRefreshStatus()
@@ -2927,6 +3010,8 @@ private struct LoveboxInboxView: View {
     let partnerName: String
     let onClose: () -> Void
     let onRefresh: () -> Void
+    let onViewMore: () -> Void
+    let canLoadMore: Bool
     let onCompose: () -> Void
 
     @State private var selectedTab: LoveboxTab = .unread
@@ -3040,6 +3125,24 @@ private struct LoveboxInboxView: View {
                                     currentUserId: userId ?? "",
                                     partnerName: partnerName
                                 )
+                            }
+
+                            if canLoadMore {
+                                Button {
+                                    hapticSoft()
+                                    onViewMore()
+                                } label: {
+                                    Text("View more")
+                                        .font(.system(.footnote, weight: .semibold))
+                                        .padding(.vertical, 10)
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.plain)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(isLightsOut ? 0.1 : 0.85))
+                                )
+                                .padding(.top, 4)
                             }
                         }
                         .padding(.horizontal, 20)
@@ -3163,9 +3266,11 @@ private struct DoodleGalleryViewWrapper: View {
     let doodles: [Doodle]
     let isLoading: Bool
     let userId: String?
+    let canLoadMore: Bool
     let getPetStatus: () -> SupabasePetStatus?
     let onClose: () -> Void
     let onRefresh: () -> Void
+    let onViewMore: () -> Void
     let onDrawAllowed: () -> Void
     let onRefreshStatus: () async -> Void
 
@@ -3180,8 +3285,10 @@ private struct DoodleGalleryViewWrapper: View {
             doodles: doodles,
             isLoading: isLoading,
             userId: userId,
+            canLoadMore: canLoadMore,
             onClose: onClose,
             onRefresh: onRefresh,
+            onViewMore: onViewMore,
             onDrawNew: {
                 Task {
                     await onRefreshStatus()
@@ -3218,8 +3325,10 @@ private struct DoodleGalleryView: View {
     let doodles: [Doodle]
     let isLoading: Bool
     let userId: String?
+    let canLoadMore: Bool
     let onClose: () -> Void
     let onRefresh: () -> Void
+    let onViewMore: () -> Void
     let onDrawNew: () -> Void
 
     @State private var selectedTab: DoodleTab = .all
@@ -3339,18 +3448,39 @@ private struct DoodleGalleryView: View {
                         ]
 
                         ScrollView {
-                            LazyVGrid(columns: columns, spacing: isIPad ? 16 : 12) {
-                                ForEach(filteredDoodles) { doodle in
-                                    Button(action: {
-                                        hapticSoft()
-                                        selectedDoodleForFullscreen = doodle
-                                    }) {
-                                        DoodleGridItem(doodle: doodle, theme: theme, isLightsOut: isLightsOut, currentUserId: userId ?? "")
+                            VStack(spacing: 10) {
+                                LazyVGrid(columns: columns, spacing: isIPad ? 16 : 12) {
+                                    ForEach(filteredDoodles) { doodle in
+                                        Button(action: {
+                                            hapticSoft()
+                                            selectedDoodleForFullscreen = doodle
+                                        }) {
+                                            DoodleGridItem(doodle: doodle, theme: theme, isLightsOut: isLightsOut, currentUserId: userId ?? "")
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
                                     }
-                                    .buttonStyle(PlainButtonStyle())
+                                }
+                                .padding(.horizontal, isIPad ? 32 : 20)
+
+                                if canLoadMore {
+                                    Button {
+                                        hapticSoft()
+                                        onViewMore()
+                                    } label: {
+                                        Text("View more")
+                                            .font(.system(.footnote, weight: .semibold))
+                                            .padding(.vertical, 10)
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.white.opacity(isLightsOut ? 0.1 : 0.85))
+                                    )
+                                    .padding(.horizontal, isIPad ? 32 : 20)
+                                    .padding(.top, 8)
                                 }
                             }
-                            .padding(.horizontal, isIPad ? 32 : 20)
                             .padding(.bottom, safeAreaInsets.bottom + 80)
                         }
                     }
