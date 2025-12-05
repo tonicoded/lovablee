@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>lovablee — support</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #fef5e8;
+            --card: #ffffff;
+            --text: #4f3826;
+            --muted: #7b624f;
+            --border: rgba(0,0,0,0.08);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: var(--bg);
+            font-family: "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
+            color: var(--text);
+            padding: 32px 18px 48px;
+            display: flex;
+            justify-content: center;
+        }
+
+        main {
+            width: min(620px, 100%);
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: clamp(18px, 3vw, 28px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.08);
+            text-align: center;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            font-size: clamp(26px, 3vw, 32px);
+            letter-spacing: -0.3px;
+            text-transform: lowercase;
+        }
+
+        p {
+            margin: 0 0 16px;
+            line-height: 1.6;
+            color: var(--muted);
+        }
+
+        .email {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: #fff9f2;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            font-weight: 700;
+            color: var(--text);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.06);
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+<main>
+    <h1>support</h1>
+    <p>for help, please email:</p>
+    <a class="email" href="mailto:anthonyvvza@gmail.com">anthonyvvza@gmail.com</a>
+    <p>we typically respond within 24 hours during business days.</p>
+</main>
+</body>
+</html>
