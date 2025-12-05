@@ -4577,6 +4577,7 @@ private struct PetActionProgressOverlay: View {
     @State private var progress: Double = 0
     @State private var tapCount = 0
     @State private var bubbaScale: CGFloat = 1.0
+    @State private var tapBursts: [TapBurst] = []
     @State private var isCompletingAction = false
     @State private var isHolding = false
     @State private var holdTimer: Timer?
@@ -4763,11 +4764,20 @@ private struct PetActionProgressOverlay: View {
             .frame(width: ActionLayout.heroSize, height: ActionLayout.heroSize)
             .scaleEffect(bubbaScale)
             .offset(x: ActionLayout.heroOffsetX, y: ActionLayout.heroOffsetY)
-                .gesture(
-                    action == .plant ?
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { _ in
-                            if !isHolding {
+            .overlay(alignment: .center) {
+                ForEach(tapBursts) { burst in
+                    Circle()
+                        .fill(burst.color)
+                        .frame(width: burst.size, height: burst.size)
+                        .offset(x: burst.offset.width, y: burst.offset.height)
+                        .opacity(burst.opacity)
+                }
+            }
+            .gesture(
+                action == .plant ?
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if !isHolding {
                                 isHolding = true
                                 startHoldProgress()
                             }
@@ -4812,13 +4822,15 @@ private struct PetActionProgressOverlay: View {
             // Increment progress (clamped to max 1.0)
             progress = min(1.0, progress + (0.05 / 3.0))
 
-            // Bubba bounce
-            withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) {
-                bubbaScale = 1.1
-            }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.6).delay(0.05)) {
-                bubbaScale = 1.0
-            }
+        // Bubba bounce
+        withAnimation(.spring(response: 0.2, dampingFraction: 0.5)) {
+            bubbaScale = 1.1
+        }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.6).delay(0.05)) {
+            bubbaScale = 1.0
+        }
+
+            spawnBurst()
         }
     }
 
@@ -4839,6 +4851,8 @@ private struct PetActionProgressOverlay: View {
             bubbaScale = 1.0
         }
 
+        spawnBurst()
+
         // Complete action when progress reaches 100%
         if progress >= 1 && !isCompletingAction {
             isCompletingAction = true
@@ -4856,6 +4870,43 @@ private struct PetActionProgressOverlay: View {
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
     }
+
+    private func spawnBurst() {
+        let colors: [Color] = [
+            accent,
+            Palette.peach,
+            Color(red: 0.98, green: 0.82, blue: 0.5),
+            Color.white.opacity(0.9)
+        ]
+
+        let burst = TapBurst(
+            offset: CGSize(width: .random(in: -50...50), height: .random(in: -20...20)),
+            size: .random(in: 16...32),
+            color: colors.randomElement() ?? accent,
+            opacity: 1.0
+        )
+        tapBursts.append(burst)
+
+        withAnimation(.easeOut(duration: 0.5)) {
+            if let idx = tapBursts.firstIndex(where: { $0.id == burst.id }) {
+                tapBursts[idx].offset.height -= .random(in: 20...60)
+                tapBursts[idx].opacity = 0.0
+                tapBursts[idx].size *= 1.1
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            tapBursts.removeAll { $0.id == burst.id }
+        }
+    }
+}
+
+private struct TapBurst: Identifiable {
+    let id = UUID()
+    var offset: CGSize
+    var size: CGFloat
+    var color: Color
+    var opacity: Double
 }
 
 private struct CozyAura: View {
