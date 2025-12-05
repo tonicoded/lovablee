@@ -258,7 +258,17 @@ private struct CloseButton: View {
 // MARK: - App Icon helper
 private struct AppIconCircleView: View {
     var body: some View {
-        if let icon = appIconImage() {
+        if hasPaywallGIF {
+            GIFImage(name: "paywall")
+                .frame(width: 92, height: 92)
+                .clipShape(Circle())
+                .background(
+                    Circle()
+                        .fill(Color(.systemGray6))
+                        .frame(width: 110, height: 110)
+                        .shadow(color: .black.opacity(0.08), radius: 10, y: 6)
+                )
+        } else if let icon = appIconImage() {
             Image(uiImage: icon)
                 .resizable()
                 .scaledToFit()
@@ -283,6 +293,10 @@ private struct AppIconCircleView: View {
                 )
                 .shadow(color: .black.opacity(0.08), radius: 10, y: 6)
         }
+    }
+
+    private var hasPaywallGIF: Bool {
+        Bundle.main.url(forResource: "paywall", withExtension: "gif") != nil
     }
 
     private func appIconImage() -> UIImage? {

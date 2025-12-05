@@ -2,7 +2,6 @@ import SwiftUI
 import UIKit
 import PencilKit
 import Combine
-import Lottie
 import WidgetKit
 
 enum BadgeInfoType: Identifiable {
@@ -1590,9 +1589,7 @@ private struct PetLayoutTab: View {
                     .foregroundColor(theme.textPrimary)
                     .position(x: PetLayout.subtitleX, y: PetLayout.subtitleY)
 
-                Image("bubbaopen")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
+                GIFImage(name: "bubba")
                     .frame(width: PetLayout.petSize, height: PetLayout.petSize)
                     .position(x: PetLayout.petX, y: PetLayout.petY)
 
@@ -2535,9 +2532,7 @@ private struct ActivityFeedView: View {
 
     private var emptyState: some View {
         VStack(spacing: 14) {
-            Image("bubbaopen")
-                .resizable()
-                .scaledToFit()
+            GIFImage(name: "bubba")
                 .frame(width: 120, height: 120)
                 .opacity(isLightsOut ? 0.9 : 1)
             Text("You're all caught up")
@@ -4141,9 +4136,7 @@ private struct PetCareScreen: View {
                 .font(.system(.largeTitle, weight: .bold))
                 .foregroundColor(theme.textPrimary)
 
-            Image("bubbaopen")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
+            GIFImage(name: "bubba")
                 .frame(width: 140, height: 140)
 
             Text(moodText.capitalized)
@@ -4641,83 +4634,11 @@ private struct PetActionProgressOverlay: View {
         isLightsOut ? Color(red: 0.14, green: 0.11, blue: 0.1) : Color.white
     }
 
-    private var lottieName: String {
-        switch action {
-        case .water: return "water"
-        case .play: return "paws"
-        case .feed: return "paws"
-        case .plant: return "water"
-        case .note: return "water" // Fallback
-        case .doodle: return "paws" // Fallback
-        }
-    }
-
     private enum ActionLayout {
-        // Water layout
-        static let waterSize: CGFloat = 220
-        static let waterScale: CGFloat = 0.18
-        static let waterOffsetX: CGFloat = -80
-        static let waterOffsetY: CGFloat = -70
-
-        // Play layout (paws.json)
-        static let playSize: CGFloat = 250
-        static let playScale: CGFloat = 0.45
-        static let playOffsetX: CGFloat = 0
-        static let playOffsetY: CGFloat = -90
-
         // Hero placement
         static let heroSize: CGFloat = 200
         static let heroOffsetX: CGFloat = 0
         static let heroOffsetY: CGFloat = 35
-    }
-
-    private struct LottieConfig {
-        let name: String
-        let size: CGFloat
-        let scale: CGFloat
-        let offsetX: CGFloat
-        let offsetY: CGFloat
-    }
-
-    private var lottieConfig: LottieConfig {
-        switch action {
-        case .water:
-            return LottieConfig(name: "water",
-                                size: ActionLayout.waterSize,
-                                scale: ActionLayout.waterScale,
-                                offsetX: ActionLayout.waterOffsetX,
-                                offsetY: ActionLayout.waterOffsetY)
-        case .play:
-            return LottieConfig(name: "paws",
-                                size: ActionLayout.playSize,
-                                scale: ActionLayout.playScale,
-                                offsetX: ActionLayout.playOffsetX,
-                                offsetY: ActionLayout.playOffsetY)
-        case .feed:
-            return LottieConfig(name: "paws",
-                                size: ActionLayout.playSize,
-                                scale: ActionLayout.playScale,
-                                offsetX: ActionLayout.playOffsetX,
-                                offsetY: ActionLayout.playOffsetY)
-        case .plant:
-            return LottieConfig(name: "water",
-                                size: ActionLayout.waterSize,
-                                scale: ActionLayout.waterScale,
-                                offsetX: ActionLayout.waterOffsetX,
-                                offsetY: ActionLayout.waterOffsetY)
-        case .note:
-            return LottieConfig(name: "water",
-                                size: ActionLayout.waterSize,
-                                scale: ActionLayout.waterScale,
-                                offsetX: ActionLayout.waterOffsetX,
-                                offsetY: ActionLayout.waterOffsetY)
-        case .doodle:
-            return LottieConfig(name: "paws",
-                                size: ActionLayout.playSize,
-                                scale: ActionLayout.playScale,
-                                offsetX: ActionLayout.playOffsetX,
-                                offsetY: ActionLayout.playOffsetY)
-        }
     }
 
     private var phaseLine: String {
@@ -4826,17 +4747,22 @@ private struct PetActionProgressOverlay: View {
     @ViewBuilder
     private var animationStack: some View {
         ZStack {
-            LottieView(name: lottieConfig.name, loopMode: .loop)
-                .frame(width: lottieConfig.size, height: lottieConfig.size)
-                .scaleEffect(lottieConfig.scale, anchor: .center)
-                .offset(x: lottieConfig.offsetX, y: lottieConfig.offsetY)
-
-            Image(action == .plant ? "plant" : "bubbaopen")
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: ActionLayout.heroSize, height: ActionLayout.heroSize)
-                .scaleEffect(bubbaScale)
-                .offset(x: ActionLayout.heroOffsetX, y: ActionLayout.heroOffsetY)
+            Group {
+                if action == .plant {
+                    GIFImage(name: "plantwater")
+                } else if action == .water {
+                    GIFImage(name: "drinking")
+                } else if action == .play {
+                    GIFImage(name: "playing")
+                } else if action == .feed {
+                    GIFImage(name: "eating")
+                } else {
+                    GIFImage(name: "bubba")
+                }
+            }
+            .frame(width: ActionLayout.heroSize, height: ActionLayout.heroSize)
+            .scaleEffect(bubbaScale)
+            .offset(x: ActionLayout.heroOffsetX, y: ActionLayout.heroOffsetY)
                 .gesture(
                     action == .plant ?
                     DragGesture(minimumDistance: 0)
@@ -4859,7 +4785,7 @@ private struct PetActionProgressOverlay: View {
                     }
                 }
         }
-        .frame(height: 260)
+        .frame(height: 320)
     }
 
     private func startHoldProgress() {
@@ -5418,24 +5344,6 @@ private func backgroundGradient(isDark: Bool) -> LinearGradient {
     ], startPoint: .top, endPoint: .bottom)
 }
 
-// MARK: - Lottie wrapper
-private struct LottieView: UIViewRepresentable {
-    let name: String
-    var loopMode: LottieLoopMode = .loop
-
-    func makeUIView(context: Context) -> LottieAnimationView {
-        let view = LottieAnimationView(name: name)
-        view.loopMode = loopMode
-        view.play()
-        return view
-    }
-
-    func updateUIView(_ uiView: LottieAnimationView, context: Context) {
-        uiView.animation = LottieAnimation.named(name)
-        uiView.loopMode = loopMode
-        uiView.play()
-    }
-}
 #Preview("Dashboard") {
     DashboardView(name: "bubba",
                   isLightsOut: .constant(false))

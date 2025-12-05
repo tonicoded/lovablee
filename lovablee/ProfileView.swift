@@ -692,6 +692,16 @@ private struct AnniversaryCard: View {
         }
     }
 
+    private var daysLabel: String {
+        if isPrimary {
+            return "\(max(0, daysAgo)) days together"
+        }
+        if daysAgo >= 0 {
+            return "\(daysAgo) days ago"
+        }
+        return "in \(abs(daysAgo)) days"
+    }
+
     var body: some View {
         HStack(spacing: 16) {
             ZStack {
@@ -709,7 +719,7 @@ private struct AnniversaryCard: View {
                     .font(.system(.body, weight: .semibold))
                     .foregroundStyle(isLightsOut ? Color.white : theme.textPrimary)
 
-                Text("\(daysAgo) days together")
+                Text(daysLabel)
                     .font(.system(.headline, weight: .bold))
                     .foregroundStyle(accentColor)
 

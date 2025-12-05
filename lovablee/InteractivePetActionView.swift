@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Lottie
 
 extension PetActionType {
     var emoji: String {
@@ -55,7 +54,6 @@ struct InteractivePetActionView: View {
     @State private var tapCount = 0
     @State private var floatingEmojis: [FloatingEmoji] = []
     @State private var bubbaScale: CGFloat = 1.0
-    @State private var showLottie = false
     @State private var isHolding = false
     @State private var holdTimer: Timer?
 
@@ -86,9 +84,7 @@ struct InteractivePetActionView: View {
                 // Bubba with tap/hold area
                 ZStack {
                     // Bubba
-                    Image("bubbaopen")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                    GIFImage(name: "bubba")
                         .frame(width: 250, height: 250)
                         .scaleEffect(bubbaScale)
                         .gesture(
@@ -112,15 +108,6 @@ struct InteractivePetActionView: View {
                                 handleTap()
                             }
                         }
-
-                    // Lottie animation overlay
-                    if showLottie {
-                        LottieView(animation: .named(actionType.animation))
-                            .looping()
-                            .resizable()
-                            .frame(width: 200, height: 200)
-                            .allowsHitTesting(false)
-                    }
 
                     // Floating emojis
                     ForEach(floatingEmojis) { emoji in
@@ -211,11 +198,6 @@ struct InteractivePetActionView: View {
             bubbaScale = 1.0
         }
 
-        // Show lottie animation
-        if !showLottie {
-            showLottie = true
-        }
-
         // Add floating emoji
         addFloatingEmoji()
 
@@ -275,9 +257,6 @@ struct InteractivePetActionView: View {
 
     private func startHoldProgress() {
         guard !isCompleting else { return }
-
-        // Show lottie animation immediately
-        showLottie = true
 
         // Haptic feedback
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()

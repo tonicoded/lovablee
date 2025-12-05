@@ -626,6 +626,7 @@ struct ContentView: View {
     }
 
     private func checkForUnopenedGifts() {
+        guard supabaseSession != nil else { return }
         Task {
             do {
                 let gifts = try await loadGiftsFromServer()
@@ -977,6 +978,7 @@ struct ContentView: View {
         self.isPerformingAccountAction = false
         self.sessionStore.clear()
         self.partnerPhotoVersion = UUID().uuidString
+        WidgetDataStore.shared.clearSession()
     }
 
     @MainActor
@@ -2036,13 +2038,10 @@ private struct InteractiveHero: View {
 
     var body: some View {
         let heroSize = 260 * scale
-        let hitInset = max(0, heroSize * 0.22)   // shrink tap area so transparent edges don't steal taps
+        let hitInset = max(CGFloat(0), heroSize * 0.22)   // shrink tap area so transparent edges don't steal taps
 
         VStack(spacing: 0) {
-            Image(imageName)
-                .resizable()
-                .renderingMode(.original)
-                .aspectRatio(contentMode: .fit)
+            GIFImage(name: imageName)
                 .frame(width: heroSize, height: heroSize)
                 .scaleEffect(isPressed ? 0.97 : 1.0)
 
@@ -2333,7 +2332,7 @@ struct CozyDecorLayer: View {
                             isEnabled: allowInteractions && windowAction != nil)
             .allowsHitTesting(allowInteractions && windowAction != nil)
 
-            InteractiveHero(imageName: "bubbaopen",
+            InteractiveHero(imageName: "bubba",
                             dimmed: isLightsOut,
                             action: {
                                 heroAction?()
