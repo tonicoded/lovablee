@@ -5,6 +5,18 @@ import Combine
 import Lottie
 import WidgetKit
 
+enum BadgeInfoType: Identifiable {
+    case hearts
+    case streak
+
+    var id: String {
+        switch self {
+        case .hearts: return "hearts"
+        case .streak: return "streak"
+        }
+    }
+}
+
 struct DashboardView: View {
     let name: String
     var partnerName: String?
@@ -37,6 +49,10 @@ struct DashboardView: View {
     var supabaseURL: URL?
     var supabaseAnonKey: String?
     var supabaseAccessToken: String?
+    var onSyncPremium: ((Date?) async throws -> Void)? = nil
+    var onRefreshCouplePremium: (() async -> Void)? = nil
+    var isCouplePremium: Bool = false
+    var couplePremiumUntil: Date? = nil
     var onSendGift: ((String, String) async throws -> Void)? = nil
     var loadGifts: (() async throws -> [PurchasedGift])? = nil
     var userEmail: String?
@@ -70,6 +86,7 @@ struct DashboardView: View {
     @State private var heartsTimer: Timer?
     @State private var streakTimer: Timer?
     @State private var statusRefreshTimer: AnyCancellable?
+    @State private var activityRefreshTimer: AnyCancellable?
     @State private var activityItems: [SupabaseActivityItem] = []
     @State private var loveNotes: [LoveNote] = []
     @State private var doodles: [Doodle] = []
@@ -80,14 +97,20 @@ struct DashboardView: View {
     @State private var myMood: MoodEntry?
     @State private var partnerMood: MoodEntry?
     @State private var isMoodViewPresented = false
-    @State private var activityRefreshTimer: AnyCancellable?
+    @State private var badgeInfo: BadgeInfoType?
+    @State private var isPaywallPresented = false
     @State private var showSettings = false
     @State private var togetherSinceDate: Date? = nil
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
     private var canEditMoodToday: Bool {
         guard let myMood else { return true }
         return !Calendar.current.isDate(myMood.moodDate, inSameDayAs: Date())
+    }
+
+    private var hasPremiumAccess: Bool {
+        subscriptionManager.hasActiveSubscription || isCouplePremium
     }
 
     var body: some View {
@@ -137,8 +160,12 @@ struct DashboardView: View {
                                        isLoveboxInboxPresented = true
                                   },
                                    tvAction: {
-                                        isLiveDoodlePresented = true
-                                   },
+                                        if hasPremiumAccess {
+                                            isLiveDoodlePresented = true
+                                        } else {
+                                            isPaywallPresented = true
+                                        }
+                                  },
                                    galleryAction: {
                                         isDoodleGalleryPresented = true
                                         refreshDoodles(force: true)
@@ -202,11 +229,18 @@ struct DashboardView: View {
                                        isLightsOut: isLightsOut,
                                        hearts: displayHearts,
                                        streak: displayStreak,
-                                       scaleX: scaleX)
-                    .position(x: layoutSize.width * 0.5 + DashboardLayout.badgesXOffset * scaleX,
-                              y: DashboardLayout.badgesYPosition(for: layoutSize,
-                                                                 topInset: geo.safeAreaInsets.top))
-                }
+                                       isPremium: hasPremiumAccess,
+                                       onHeartsTap: { badgeInfo = .hearts },
+                                       onStreakTap: { badgeInfo = .streak },
+                                       onProTap: {
+                                           if !hasPremiumAccess {
+                                               isPaywallPresented = true
+                                           }
+                                       })
+            .position(x: layoutSize.width * 0.5 + DashboardLayout.badgesXOffset * scaleX,
+                      y: DashboardLayout.badgesYPosition(for: layoutSize,
+                                                         topInset: geo.safeAreaInsets.top))
+        }
 
                 if activeTab == .shortcuts {
                     ShortcutsTabView(theme: theme,
@@ -374,7 +408,11 @@ struct DashboardView: View {
                                           print("❌ Error sending love note: \(error)")
                                           // Check if it's a cooldown error
                                           let errorString = String(describing: error)
-                                          if errorString.contains("cooldown_active") {
+                                          if errorString.contains("no_partner") || errorString.contains("cannot_send_to_self") {
+                                              await MainActor.run {
+                                                  onPetAlert?("Pair up first", "Invite your partner to your space before sending love notes.")
+                                              }
+                                          } else if errorString.contains("cooldown_active") {
                                               // Refresh status to get updated cooldown
                                               await refreshPetStatusAsync()
                                               await MainActor.run {
@@ -469,17 +507,21 @@ struct DashboardView: View {
                                                     print("🎨 Pet status is nil after refresh")
                                                 }
                                             }
-                                        } catch {
-                                            print("❌ Error saving doodle: \(error)")
-                                            print("❌ Error details: \(error.localizedDescription)")
-                                            // Check if it's a cooldown error
-                                            let errorString = String(describing: error)
-                                            if errorString.contains("cooldown_active") {
-                                                // Refresh status to get updated cooldown
-                                                await refreshPetStatusAsync()
-                                                await MainActor.run {
-                                                    if let status = petStatus, let lastDoodle = status.lastDoodleCreatedAt {
-                                                        let timeRemaining = 900 - Int(Date().timeIntervalSince(lastDoodle))
+                                            } catch {
+                                                print("❌ Error saving doodle: \(error)")
+                                                print("❌ Error details: \(error.localizedDescription)")
+                                                // Check if it's a cooldown error
+                                                let errorString = String(describing: error)
+                                                if errorString.contains("no_partner") || errorString.contains("cannot_send_to_self") {
+                                                    await MainActor.run {
+                                                        onPetAlert?("Pair up first", "Invite your partner to your space before sharing doodles.")
+                                                    }
+                                                } else if errorString.contains("cooldown_active") {
+                                                    // Refresh status to get updated cooldown
+                                                    await refreshPetStatusAsync()
+                                                    await MainActor.run {
+                                                        if let status = petStatus, let lastDoodle = status.lastDoodleCreatedAt {
+                                                            let timeRemaining = 900 - Int(Date().timeIntervalSince(lastDoodle))
                                                         let minutesRemaining = max(1, timeRemaining / 60)
                                                         onPetAlert?("🎨 Doodle cooldown", "Please wait \(minutesRemaining) more minutes before creating another doodle!")
                                                     } else {
@@ -571,7 +613,11 @@ struct DashboardView: View {
                         }
                     },
                     loadGifts: loadGifts,
-                    userIdentifier: userIdentifier
+                    userIdentifier: userIdentifier,
+                    hasPremiumAccess: hasPremiumAccess,
+                    onRequirePremium: {
+                        isPaywallPresented = true
+                    }
                 )
             }
             .fullScreenCover(isPresented: $isPetSheetPresented) {
@@ -670,15 +716,19 @@ struct DashboardView: View {
                              userName: name,
                              userEmail: userEmail,
                              partnerName: partnerName,
-                             onLogout: {
-                                 showSettings = false
-                                 onLogout?()
-                             },
-                             onDeleteAccount: {
-                                 showSettings = false
-                                 onDeleteAccount?()
-                             },
-                             onClose: { showSettings = false })
+                            onLogout: {
+                                showSettings = false
+                                onLogout?()
+                            },
+                            onDeleteAccount: {
+                                showSettings = false
+                                onDeleteAccount?()
+                            },
+                            onClose: { showSettings = false },
+                            onSyncPremium: onSyncPremium,
+                            onRefreshCouplePremium: onRefreshCouplePremium,
+                            isCouplePremium: isCouplePremium,
+                            couplePremiumUntil: couplePremiumUntil)
                     .background(backgroundGradient(isDark: isLightsOut).ignoresSafeArea())
             }
         }
@@ -730,6 +780,55 @@ struct DashboardView: View {
                 refreshDoodles(force: true)
                 refreshMoods()
             }
+        }
+        .sheet(isPresented: $isPaywallPresented) {
+            PaywallView(
+                onSelectMonthly: {
+                    Task {
+                        await subscriptionManager.purchase(productID: SubscriptionManager.Plan.monthly.rawValue)
+                        if let onSyncPremium {
+                            try? await onSyncPremium(subscriptionManager.subscriptionExpirationDate)
+                        }
+                    }
+                    isPaywallPresented = false
+                },
+                onSelectYearly: {
+                    Task {
+                        await subscriptionManager.purchase(productID: SubscriptionManager.Plan.yearly.rawValue)
+                        if let onSyncPremium {
+                            try? await onSyncPremium(subscriptionManager.subscriptionExpirationDate)
+                        }
+                    }
+                    isPaywallPresented = false
+                },
+                onRestore: {
+                    Task {
+                        await subscriptionManager.restorePurchases()
+                        if let onSyncPremium {
+                            try? await onSyncPremium(subscriptionManager.subscriptionExpirationDate)
+                        }
+                    }
+                    isPaywallPresented = false
+                },
+                onClose: { isPaywallPresented = false },
+                monthlyPrice: subscriptionManager.displayPrice(for: .monthly),
+                yearlyPrice: subscriptionManager.displayPrice(for: .yearly)
+            )
+            .task {
+                await subscriptionManager.refreshProducts()
+                if let onRefreshCouplePremium {
+                    await onRefreshCouplePremium()
+                }
+            }
+        }
+        .sheet(item: $badgeInfo) { (info: BadgeInfoType) in
+            BadgeInfoSheet(info: info,
+                           isPremium: hasPremiumAccess,
+                           onUpgrade: {
+                               badgeInfo = nil
+                               isPaywallPresented = true
+                           },
+                           onClose: { badgeInfo = nil })
         }
     }
 
@@ -2002,63 +2101,190 @@ private struct CoupleStatusBadges: View {
     let isLightsOut: Bool
     let hearts: Int
     let streak: Int
-    let scaleX: CGFloat
+    let isPremium: Bool
+    let onHeartsTap: (() -> Void)?
+    let onStreakTap: (() -> Void)?
+    let onProTap: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 10) {
+            SimpleBadge(iconName: "heart.fill",
+                        label: "\(hearts)",
+                        iconColor: Color(red: 0.96, green: 0.45, blue: 0.38),
+                        isLightsOut: isLightsOut,
+                        action: onHeartsTap)
+            SimpleBadge(iconName: "flame.fill",
+                        label: "\(streak)",
+                        iconColor: Color(red: 0.98, green: 0.64, blue: 0.33),
+                        isLightsOut: isLightsOut,
+                        action: onStreakTap)
+            SimpleBadge(iconName: "crown.fill",
+                        label: isPremium ? "Pro" : "Go Pro",
+                        iconColor: Color(red: 0.98, green: 0.8, blue: 0.2),
+                        isLightsOut: isLightsOut,
+                        trailingCheck: isPremium,
+                        action: isPremium ? nil : onProTap)
+        }
+        .frame(maxWidth: 360)
+    }
+
+    private struct SimpleBadge: View {
+        let iconName: String
+        let label: String
+        let iconColor: Color
+        let isLightsOut: Bool
+        var trailingCheck: Bool = false
+        var action: (() -> Void)? = nil
+
+        var body: some View {
+            let content = HStack(spacing: 10) {
+                Image(systemName: iconName)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(iconColor.opacity(isLightsOut ? 0.9 : 1))
+                Text(label)
+                    .font(.system(.subheadline, weight: .semibold))
+                    .foregroundColor(isLightsOut ? .white : Color(red: 0.35, green: 0.27, blue: 0.22))
+                if trailingCheck {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(red: 0.35, green: 0.7, blue: 0.4))
+                }
+            }
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(isLightsOut ? 0.18 : 0.72))
+                    .blur(radius: 0)
+            )
+            .shadow(color: Color.black.opacity(isLightsOut ? 0.12 : 0.06), radius: 8, y: 4)
+
+            if let action {
+                Button(action: action) {
+                    content
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+            } else {
+                content
+            }
+        }
+    }
+}
+
+private struct BadgeInfoSheet: View {
+    let info: BadgeInfoType
+    let isPremium: Bool
+    let onUpgrade: () -> Void
+    let onClose: () -> Void
 
     var body: some View {
         ZStack {
-            CoupleBadge(iconName: "heart.fill",
-                        value: hearts,
-                        iconColor: Color(red: 0.96, green: 0.45, blue: 0.38),
-                        theme: theme,
-                        isLightsOut: isLightsOut)
-            .offset(x: DashboardLayout.heartsBadgeXOffset * scaleX)
+            Color.black.opacity(0.45).ignoresSafeArea()
+                .onTapGesture { onClose() }
 
-            CoupleBadge(iconName: "flame.fill",
-                        value: streak,
-                        iconColor: Color(red: 0.98, green: 0.64, blue: 0.33),
-                        theme: theme,
-                        isLightsOut: isLightsOut)
-            .offset(x: DashboardLayout.streakBadgeXOffset * scaleX)
+            VStack(spacing: 18) {
+                HStack {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(Color.primary.opacity(0.7))
+                            .padding(10)
+                            .background(Circle().fill(Color.white.opacity(0.6)))
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.horizontal, 6)
+
+                VStack(spacing: 14) {
+                    Image(systemName: infoIcon)
+                        .font(.system(size: 42, weight: .bold))
+                        .foregroundColor(infoTint)
+                        .padding(12)
+                        .background(Circle().fill(infoTint.opacity(0.15)))
+
+                    Text(infoTitle)
+                        .font(.system(size: 22, weight: .black))
+                        .foregroundColor(Color(red: 0.2, green: 0.18, blue: 0.2))
+
+                    Text(infoBody)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(red: 0.35, green: 0.32, blue: 0.34))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                }
+                .padding(.vertical, 6)
+
+                if showUpgrade {
+                    Button(action: onUpgrade) {
+                        Text("Upgrade to Pro")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                LinearGradient(
+                                    colors: [Color(red: 0.96, green: 0.44, blue: 0.52),
+                                             Color(red: 0.9, green: 0.3, blue: 0.48)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .shadow(color: Color.black.opacity(0.18), radius: 10, y: 6)
+                    }
+                    .padding(.horizontal, 6)
+                }
+            }
+            .padding(24)
+            .background(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .fill(LinearGradient(
+                        colors: [Color(red: 1.0, green: 0.97, blue: 0.95),
+                                 Color(red: 0.99, green: 0.94, blue: 0.9)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing))
+                    .shadow(color: Color.black.opacity(0.22), radius: 22, y: 12)
+            )
+            .padding(.horizontal, 28)
         }
-        .frame(width: DashboardLayout.badgeWidth * 2 + DashboardLayout.badgeSpacing)
     }
 
-    private struct CoupleBadge: View {
-        let iconName: String
-        let value: Int
-        let iconColor: Color
-        let theme: PaletteTheme
-        let isLightsOut: Bool
-
-        var body: some View {
-            HStack(spacing: 10) {
-                Image(systemName: iconName)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(iconColor)
-                    .shadow(color: iconColor.opacity(0.25), radius: 6, x: 0, y: 2)
-                Text("\(value)")
-                    .font(.system(.subheadline, weight: .semibold))
-                    .foregroundColor(theme.textPrimary)
-            }
-            .padding(.vertical, 11)
-            .padding(.horizontal, 16)
-            .frame(width: DashboardLayout.badgeWidth, alignment: .center)
-            .background(badgeBackground)
-            .clipShape(Capsule(style: .continuous))
-            .shadow(color: theme.shadowColor.opacity(isLightsOut ? 0.35 : 0.18), radius: 12, y: 7)
-            .overlay(
-                Capsule(style: .continuous)
-                    .stroke(Color.white.opacity(isLightsOut ? 0.16 : 0.22), lineWidth: 1)
-            )
+    private var infoIcon: String {
+        switch info {
+        case .hearts: return "heart.fill"
+        case .streak: return "flame.fill"
         }
+    }
 
-        private var badgeBackground: some View {
-            let top = Palette.cream.opacity(isLightsOut ? 0.18 : 0.9)
-            let bottom = Palette.peach.opacity(isLightsOut ? 0.2 : 0.95)
-            return LinearGradient(colors: [top, bottom],
-                                  startPoint: .topLeading,
-                                  endPoint: .bottomTrailing)
+    private var infoTint: Color {
+        switch info {
+        case .hearts: return Color(red: 0.96, green: 0.45, blue: 0.52)
+        case .streak: return Color(red: 0.98, green: 0.64, blue: 0.33)
         }
+    }
+
+    private var infoTitle: String {
+        switch info {
+        case .hearts: return "Your Hearts"
+        case .streak: return "Your Streak"
+        }
+    }
+
+    private var infoBody: String {
+        switch info {
+        case .hearts:
+            return isPremium
+                ? "Earn hearts by caring for your space. Pro helps you rack up bonuses faster."
+                : "Earn hearts by watering, playing, gifting, and sharing doodles. Upgrade to Pro for extra boosts."
+        case .streak:
+            return "Your streak grows when you or your partner care for your home each day. Keep it alive to unlock surprises."
+        }
+    }
+
+    private var showUpgrade: Bool {
+        !isPremium && info == .hearts
     }
 }
 
@@ -2441,7 +2667,13 @@ private struct SettingsView: View {
     let onLogout: (() -> Void)?
     let onDeleteAccount: (() -> Void)?
     let onClose: () -> Void
+    let onSyncPremium: ((Date?) async throws -> Void)?
+    let onRefreshCouplePremium: (() async -> Void)?
+    let isCouplePremium: Bool
+    let couplePremiumUntil: Date?
 
+    @State private var isPaywallPresented = false
+    @StateObject private var subscriptionManager = SubscriptionManager.shared
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -2452,13 +2684,54 @@ private struct SettingsView: View {
             ScrollView(showsIndicators: false) {
             VStack(alignment: .leading, spacing: 28) {
                 header
-                    accountCard
-                    supportCard
-                    dangerCard
-                }
+                accountCard
+                proCard
+                supportCard
+                dangerCard
+            }
                 .padding(.horizontal, 24)
                 .padding(.top, 32)
                 .padding(.bottom, 80)
+            }
+        }
+        .sheet(isPresented: $isPaywallPresented) {
+            PaywallView(
+                onSelectMonthly: {
+                    Task {
+                        await subscriptionManager.purchase(productID: SubscriptionManager.Plan.monthly.rawValue)
+                        if let onSyncPremium {
+                            try? await onSyncPremium(subscriptionManager.subscriptionExpirationDate)
+                        }
+                    }
+                    isPaywallPresented = false
+                },
+                onSelectYearly: {
+                    Task {
+                        await subscriptionManager.purchase(productID: SubscriptionManager.Plan.yearly.rawValue)
+                        if let onSyncPremium {
+                            try? await onSyncPremium(subscriptionManager.subscriptionExpirationDate)
+                        }
+                    }
+                    isPaywallPresented = false
+                },
+                onRestore: {
+                    Task {
+                        await subscriptionManager.restorePurchases()
+                        if let onSyncPremium {
+                            try? await onSyncPremium(subscriptionManager.subscriptionExpirationDate)
+                        }
+                    }
+                    isPaywallPresented = false
+                },
+                onClose: { isPaywallPresented = false },
+                monthlyPrice: subscriptionManager.displayPrice(for: .monthly),
+                yearlyPrice: subscriptionManager.displayPrice(for: .yearly)
+            )
+            .task {
+                await subscriptionManager.refreshProducts()
+                if let onRefreshCouplePremium {
+                    await onRefreshCouplePremium()
+                }
             }
         }
     }
@@ -2468,6 +2741,35 @@ private struct SettingsView: View {
             isLightsOut ? Color(red: 0.05, green: 0.04, blue: 0.05) : Color(red: 0.99, green: 0.95, blue: 0.9),
             isLightsOut ? Color(red: 0.11, green: 0.08, blue: 0.07) : Color.white
         ], startPoint: .top, endPoint: .bottom)
+    }
+
+    private var effectiveIsPremium: Bool {
+        subscriptionManager.hasActiveSubscription || isCouplePremium
+    }
+
+    private var effectiveRemainingTime: String? {
+        if let local = subscriptionManager.remainingTimeDescription {
+            return local
+        }
+        if let partnerUntil = couplePremiumUntil {
+            let components = Calendar.current.dateComponents([.day, .hour], from: Date(), to: partnerUntil)
+            var parts: [String] = []
+            if let days = components.day, days > 0 { parts.append("\(days)d") }
+            if let hours = components.hour, hours > 0 { parts.append("\(hours)h") }
+            if parts.isEmpty { parts.append("under 1h") }
+            return parts.joined(separator: " ")
+        }
+        return nil
+    }
+
+    private var effectivePlanName: String {
+        if subscriptionManager.hasActiveSubscription, let plan = subscriptionManager.activePlan {
+            return plan.marketingName
+        }
+        if isCouplePremium {
+            return "Pro"
+        }
+        return "Free"
     }
 
     private var header: some View {
@@ -2506,6 +2808,27 @@ private struct SettingsView: View {
             if let partner = partnerName {
                 SettingRow(title: "Partner", subtitle: partner, systemImage: "heart.fill", theme: theme)
             }
+            SettingRow(title: "Plan",
+                       subtitle: effectivePlanName,
+                       systemImage: effectiveIsPremium ? "crown.fill" : "crown",
+                       theme: theme)
+            if let remaining = effectiveRemainingTime {
+                SettingRow(title: "Time left", subtitle: remaining, systemImage: "clock.fill", theme: theme)
+            }
+        }
+    }
+
+    private var proCard: some View {
+        SectionCard(title: "Pro", theme: theme, isLightsOut: isLightsOut) {
+            Button {
+                isPaywallPresented = true
+            } label: {
+                SettingRow(title: "Go Pro",
+                           subtitle: effectiveIsPremium ? "You’re premium" : "Unlock premium features",
+                           systemImage: "sparkles",
+                           theme: theme)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -2514,6 +2837,13 @@ private struct SettingsView: View {
             LinkRow(title: "Terms of Service", systemImage: "doc.text", url: URL(string: "https://lovablee.app/terms"), theme: theme, openURL: openURL)
             LinkRow(title: "Privacy Policy", systemImage: "hand.raised.fill", url: URL(string: "https://lovablee.app/privacy"), theme: theme, openURL: openURL)
             LinkRow(title: "Contact Support", systemImage: "envelope.fill", url: URL(string: "mailto:support@lovablee.app"), theme: theme, openURL: openURL)
+        }
+        .onAppear {
+            Task {
+                if let onRefreshCouplePremium {
+                    await onRefreshCouplePremium()
+                }
+            }
         }
     }
 
@@ -5111,44 +5441,9 @@ private struct LottieView: UIViewRepresentable {
                   isLightsOut: .constant(false))
 }
 
-#Preview("Pet care light") {
-    PetLayoutTab(theme: Palette.lightTheme,
-                 status: .preview,
-                 isLightsOut: false,
-                 onClose: {},
-                 onRefresh: {},
-                 onWater: {},
-                 onPlay: {},
-                 onFeed: {},
-                 onRenamePet: nil,
-                 onRenameCompleted: nil)
-}
 
-#Preview("Pet care dark") {
-    PetLayoutTab(theme: Palette.darkTheme,
-                 status: .preview,
-                 isLightsOut: true,
-                 onClose: {},
-                 onRefresh: {},
-                 onWater: {},
-                 onPlay: {},
-                 onFeed: {},
-                 onRenamePet: nil,
-                 onRenameCompleted: nil)
-}
 
-#Preview("Pet care cooldown") {
-    PetLayoutTab(theme: Palette.lightTheme,
-                 status: .cooldownPreview,
-                 isLightsOut: false,
-                 onClose: {},
-                 onRefresh: {},
-                 onWater: {},
-                 onPlay: {},
-                 onFeed: {},
-                 onRenamePet: nil,
-                 onRenameCompleted: nil)
-}
+
 
 private struct CooldownAlert: Identifiable {
     let id = UUID()

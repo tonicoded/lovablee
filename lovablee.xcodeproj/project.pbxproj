@@ -11,6 +11,7 @@
 		0416C5152EDEE97B00479ED2 /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0416C4F32EDEE93100479ED2 /* WidgetKit.framework */; };
 		0416C5162EDEE97B00479ED2 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0416C4F52EDEE93100479ED2 /* SwiftUI.framework */; };
 		0416C5212EDEE97C00479ED2 /* LovableeWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 0416C5142EDEE97B00479ED2 /* LovableeWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		043558D32EE21FB200DEB12C /* StoreKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 043558D22EE21FB200DEB12C /* StoreKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,9 +57,11 @@
 		0416C4F52EDEE93100479ED2 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 		0416C5142EDEE97B00479ED2 /* LovableeWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = LovableeWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		0416C5312EDEEA7900479ED2 /* LovableeWidgetExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = LovableeWidgetExtension.entitlements; sourceTree = "<group>"; };
+		043558D22EE21FB200DEB12C /* StoreKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = StoreKit.framework; path = System/Library/Frameworks/StoreKit.framework; sourceTree = SDKROOT; };
 		0459E8D12EDB15AF00AA65E6 /* lovablee.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = lovablee.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0459E8DE2EDB15B000AA65E6 /* lovableeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = lovableeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		0459E8E82EDB15B000AA65E6 /* lovableeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = lovableeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		04E4DA8C2EE22C0200F8D4CB /* Lovablee.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = Lovablee.storekit; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -136,6 +139,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				040279B42EDD9A73002A49F9 /* Lottie in Frameworks */,
+				043558D32EE21FB200DEB12C /* StoreKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -159,6 +163,7 @@
 		040279B22EDD9A73002A49F9 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				043558D22EE21FB200DEB12C /* StoreKit.framework */,
 				0416C4F32EDEE93100479ED2 /* WidgetKit.framework */,
 				0416C4F52EDEE93100479ED2 /* SwiftUI.framework */,
 			);
@@ -168,6 +173,7 @@
 		0459E8C82EDB15AF00AA65E6 = {
 			isa = PBXGroup;
 			children = (
+				04E4DA8C2EE22C0200F8D4CB /* Lovablee.storekit */,
 				0416C5312EDEEA7900479ED2 /* LovableeWidgetExtension.entitlements */,
 				0459E8D32EDB15AF00AA65E6 /* lovablee */,
 				0459E8E12EDB15B000AA65E6 /* lovableeTests */,

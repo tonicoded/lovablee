@@ -96,6 +96,52 @@ struct SupabasePetStatus: Codable {
     }
 }
 
+#if DEBUG
+extension SupabasePetStatus {
+    static var preview: SupabasePetStatus {
+        SupabasePetStatus(
+            userId: "preview-user",
+            petName: "Bubba",
+            mood: "happy",
+            hydrationLevel: 80,
+            playfulnessLevel: 70,
+            hearts: 12,
+            streakCount: 5,
+            lastActiveDate: Date().addingTimeInterval(-3600),
+            lastWateredAt: Date().addingTimeInterval(-300),
+            lastPlayedAt: Date().addingTimeInterval(-1800),
+            lastFedAt: Date().addingTimeInterval(-7200),
+            lastNoteSentAt: Date().addingTimeInterval(-600),
+            lastDoodleCreatedAt: Date().addingTimeInterval(-900),
+            lastPlantWateredAt: Date().addingTimeInterval(-4000),
+            adoptedAt: Date().addingTimeInterval(-86400 * 30),
+            updatedAt: Date()
+        )
+    }
+
+    static var cooldownPreview: SupabasePetStatus {
+        SupabasePetStatus(
+            userId: "preview-user",
+            petName: "Bubba",
+            mood: "sleepy",
+            hydrationLevel: 95,
+            playfulnessLevel: 95,
+            hearts: 24,
+            streakCount: 15,
+            lastActiveDate: Date(),
+            lastWateredAt: Date(),
+            lastPlayedAt: Date(),
+            lastFedAt: Date(),
+            lastNoteSentAt: Date(),
+            lastDoodleCreatedAt: Date(),
+            lastPlantWateredAt: Date(),
+            adoptedAt: Date().addingTimeInterval(-86400 * 60),
+            updatedAt: Date()
+        )
+    }
+}
+#endif
+
 enum PetActionType: String, Codable {
     case water
     case play
@@ -317,42 +363,4 @@ extension DateFormatter {
     }()
 }
 
-#if DEBUG
-extension SupabasePetStatus {
-    static var preview: SupabasePetStatus {
-        SupabasePetStatus(
-            userId: UUID().uuidString,
-            petName: "Bubba",
-            mood: "Joyful",
-            hydrationLevel: 88,
-            playfulnessLevel: 72,
-            hearts: 80,
-            streakCount: 5,
-            lastActiveDate: Date().addingTimeInterval(-60 * 60 * 2),
-            lastWateredAt: Date().addingTimeInterval(-60 * 60 * 7),
-            lastPlayedAt: Date().addingTimeInterval(-60 * 60 * 3),
-            lastPlantWateredAt: Date().addingTimeInterval(-60 * 60 * 5),
-            adoptedAt: Date().addingTimeInterval(-60 * 60 * 24 * 12),
-            updatedAt: Date().addingTimeInterval(-60 * 5)
-        )
-    }
 
-    static var cooldownPreview: SupabasePetStatus {
-        SupabasePetStatus(
-            userId: UUID().uuidString,
-            petName: "Bubba",
-            mood: "Sleepy",
-            hydrationLevel: 64,
-            playfulnessLevel: 38,
-            hearts: 12,
-            streakCount: 2,
-            lastActiveDate: Date().addingTimeInterval(-60 * 60 * 2),
-            lastWateredAt: Date().addingTimeInterval(-60 * 60 * 2),
-            lastPlayedAt: Date().addingTimeInterval(-60 * 15),
-            lastPlantWateredAt: Date().addingTimeInterval(-60 * 10),
-            adoptedAt: Date().addingTimeInterval(-60 * 60 * 24 * 3),
-            updatedAt: Date().addingTimeInterval(-60 * 20)
-        )
-    }
-}
-#endif

@@ -15,18 +15,18 @@ struct GiftItem: Identifiable {
         GiftItem(name: "lollipop", imageName: "lollipop", cost: 120, isLocked: false, isPremium: false),
         GiftItem(name: "sweet", imageName: "sweet", cost: 130, isLocked: false, isPremium: false),
         GiftItem(name: "rose", imageName: "rose", cost: 150, isLocked: false, isPremium: false),
-        GiftItem(name: "donut", imageName: "donut", cost: 160, isLocked: false, isPremium: false),
-        GiftItem(name: "star", imageName: "star", cost: 170, isLocked: false, isPremium: false),
-        GiftItem(name: "toast", imageName: "toast", cost: 180, isLocked: false, isPremium: false),
-        GiftItem(name: "cake", imageName: "cake", cost: 200, isLocked: false, isPremium: false),
-        GiftItem(name: "lipgloss", imageName: "lipgloss", cost: 220, isLocked: false, isPremium: false),
-        GiftItem(name: "juice", imageName: "juice", cost: 250, isLocked: false, isPremium: false),
-        GiftItem(name: "snowman", imageName: "snowman", cost: 280, isLocked: false, isPremium: false),
-        GiftItem(name: "xmastree", imageName: "xmastree", cost: 350, isLocked: false, isPremium: false),
-        GiftItem(name: "pizza", imageName: "pizza", cost: 400, isLocked: false, isPremium: false),
-        GiftItem(name: "watch", imageName: "watch", cost: 450, isLocked: false, isPremium: false),
-        GiftItem(name: "necklace", imageName: "necklace", cost: 500, isLocked: false, isPremium: false),
-        GiftItem(name: "ring", imageName: "ring", cost: 600, isLocked: false, isPremium: false)
+        GiftItem(name: "donut", imageName: "donut", cost: 160, isLocked: false, isPremium: true),
+        GiftItem(name: "star", imageName: "star", cost: 170, isLocked: false, isPremium: true),
+        GiftItem(name: "toast", imageName: "toast", cost: 180, isLocked: false, isPremium: true),
+        GiftItem(name: "cake", imageName: "cake", cost: 200, isLocked: false, isPremium: true),
+        GiftItem(name: "lipgloss", imageName: "lipgloss", cost: 220, isLocked: false, isPremium: true),
+        GiftItem(name: "juice", imageName: "juice", cost: 250, isLocked: false, isPremium: true),
+        GiftItem(name: "snowman", imageName: "snowman", cost: 280, isLocked: false, isPremium: true),
+        GiftItem(name: "xmastree", imageName: "xmastree", cost: 350, isLocked: false, isPremium: true),
+        GiftItem(name: "pizza", imageName: "pizza", cost: 400, isLocked: false, isPremium: true),
+        GiftItem(name: "watch", imageName: "watch", cost: 450, isLocked: false, isPremium: true),
+        GiftItem(name: "necklace", imageName: "necklace", cost: 500, isLocked: false, isPremium: true),
+        GiftItem(name: "ring", imageName: "ring", cost: 600, isLocked: false, isPremium: true)
     ]
 }
 
@@ -64,6 +64,8 @@ struct GiftsView: View {
     let onPurchase: (GiftItem, String) -> Void
     let loadGifts: (() async throws -> [PurchasedGift])?
     let userIdentifier: String?
+    let hasPremiumAccess: Bool
+    let onRequirePremium: (() -> Void)?
 
     @State private var selectedGift: GiftItem?
     @State private var showPurchaseSheet = false
@@ -114,10 +116,15 @@ struct GiftsView: View {
                         // Gift grid
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(GiftItem.allGifts) { gift in
-                                GiftCard(gift: gift, currentHearts: currentHearts)
+                                GiftCard(gift: gift, currentHearts: currentHearts, hasPremiumAccess: hasPremiumAccess)
                                     .onTapGesture {
-                                        if !gift.isLocked {
-                                            print("🎁 Gift tapped: \(gift.name), Cost: \(gift.cost), Current Hearts: \(currentHearts), Can afford: \(currentHearts >= gift.cost)")
+                                        if gift.isPremium && !hasPremiumAccess {
+                                            // Close the shop first, then show paywall to avoid nested sheets.
+                                            dismiss()
+                                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                                onRequirePremium?()
+                                            }
+                                        } else if !gift.isLocked {
                                             selectedGift = gift
                                             showPurchaseSheet = true
                                         }
@@ -169,9 +176,14 @@ struct GiftsView: View {
 struct GiftCard: View {
     let gift: GiftItem
     let currentHearts: Int
+    let hasPremiumAccess: Bool
 
     var canAfford: Bool {
         currentHearts >= gift.cost && !gift.isLocked
+    }
+
+    private var isLocked: Bool {
+        gift.isLocked || (gift.isPremium && !hasPremiumAccess)
     }
 
     var body: some View {
@@ -182,7 +194,7 @@ struct GiftCard: View {
                     .fill(Color.white.opacity(0.9))
                     .frame(height: 160)
 
-                if gift.isLocked {
+                if isLocked {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 60))
                         .foregroundColor(Color(red: 0.6, green: 0.55, blue: 0.5))
@@ -223,7 +235,7 @@ struct GiftCard: View {
                     .fill(Color.white.opacity(0.7))
             )
         }
-        .opacity(canAfford ? 1.0 : 0.6)
+        .opacity(isLocked ? 0.55 : (canAfford ? 1.0 : 0.75))
     }
 }
 
@@ -237,6 +249,11 @@ struct GiftPurchaseSheet: View {
 
     @State private var message: String = ""
     @FocusState private var isMessageFocused: Bool
+    @State private var showHeartsAlert = false
+
+    private var hasEnoughHearts: Bool {
+        currentHearts >= gift.cost
+    }
 
     var body: some View {
         NavigationView {
@@ -292,6 +309,10 @@ struct GiftPurchaseSheet: View {
                     VStack(spacing: 16) {
                         Button(action: {
                             isMessageFocused = false
+                            guard hasEnoughHearts else {
+                                showHeartsAlert = true
+                                return
+                            }
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 onConfirm(message)
                             }
@@ -339,6 +360,11 @@ struct GiftPurchaseSheet: View {
         .ignoresSafeArea(.keyboard, edges: .bottom)
         .presentationDragIndicator(.visible)
         .presentationDetents([.large])
+        .alert("Not enough hearts", isPresented: $showHeartsAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("You need \(gift.cost) hearts but only have \(currentHearts). Keep completing tasks to earn more.")
+        }
     }
 }
 
@@ -499,60 +525,114 @@ struct ReceivedGiftModal: View {
 
     var body: some View {
         ZStack {
-            Color.black.opacity(0.4)
-                .ignoresSafeArea()
-                .onTapGesture {
-                    dismiss()
-                }
-
-            VStack(spacing: 24) {
-                // Gift image
-                Image(gift.giftType)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 120, height: 120)
-
-                // Title
-                Text("🎁 Gift Received!")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.25))
-
-                // Sender info
-                Text("\(gift.senderName) sent you a \(gift.giftType)!")
-                    .font(.system(size: 18))
-                    .foregroundColor(Color(red: 0.5, green: 0.4, blue: 0.35))
-                    .multilineTextAlignment(.center)
-
-                // Message
-                if let message = gift.message, !message.isEmpty {
-                    Text("\"\(message)\"")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundColor(Color(red: 0.4, green: 0.3, blue: 0.25))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                        .italic()
-                }
-
-                // Close button
-                Button(action: { dismiss() }) {
-                    Text("Thanks!")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(Color(red: 1.0, green: 0.4, blue: 0.4))
-                        )
-                }
-                .padding(.horizontal, 24)
-            }
-            .padding(32)
-            .background(
-                RoundedRectangle(cornerRadius: 24)
-                    .fill(Color(red: 0.996, green: 0.909, blue: 0.749))
+            // Dimmed backdrop
+            LinearGradient(
+                colors: [
+                    Color(red: 0.12, green: 0.1, blue: 0.12).opacity(0.9),
+                    Color(red: 0.08, green: 0.06, blue: 0.07).opacity(0.85)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
             )
-            .padding(.horizontal, 40)
+            .ignoresSafeArea()
+            .onTapGesture { dismiss() }
+
+            VStack(spacing: 18) {
+                Capsule()
+                    .fill(Color.white.opacity(0.25))
+                    .frame(width: 44, height: 6)
+                    .padding(.top, 6)
+
+                VStack(spacing: 18) {
+                    ZStack {
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 1.0, green: 0.95, blue: 0.92),
+                                        Color(red: 0.99, green: 0.88, blue: 0.84)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 126, height: 126)
+                            .shadow(color: Color.black.opacity(0.18), radius: 12, y: 6)
+                        Image(gift.giftType)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 90, height: 90)
+                    }
+
+                    VStack(spacing: 10) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "gift.fill")
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundColor(Color(red: 0.98, green: 0.45, blue: 0.32))
+                            Text("Gift Received")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundColor(Color(red: 0.25, green: 0.19, blue: 0.16))
+                        }
+
+                        Text("\(gift.senderName) sent you a \(gift.giftType)!")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(Color(red: 0.3, green: 0.24, blue: 0.21))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 14)
+
+                        if let message = gift.message, !message.isEmpty {
+                            Text("“\(message)”")
+                                .font(.system(size: 16, weight: .medium, design: .serif))
+                                .foregroundColor(Color(red: 0.33, green: 0.26, blue: 0.24))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 18)
+                        }
+                    }
+
+                    Button(action: { dismiss() }) {
+                        Text("Thanks!")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                LinearGradient(
+                                    colors: [
+                                        Color(red: 0.98, green: 0.45, blue: 0.52),
+                                        Color(red: 0.96, green: 0.34, blue: 0.45)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .shadow(color: Color.black.opacity(0.18), radius: 12, y: 6)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(24)
+                .background(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 1.0, green: 0.96, blue: 0.91),
+                                    Color(red: 0.99, green: 0.92, blue: 0.84)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                                .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                        )
+                        .shadow(color: Color.black.opacity(0.22), radius: 22, y: 12)
+                )
+                .padding(.horizontal, 24)
+
+                Spacer(minLength: 12)
+            }
         }
     }
 }
@@ -568,7 +648,9 @@ struct GiftsView_Previews: PreviewProvider {
                 print("Purchased \(gift.name) with message: \(message)")
             },
             loadGifts: nil,
-            userIdentifier: nil
+            userIdentifier: nil,
+            hasPremiumAccess: true,
+            onRequirePremium: {}
         )
     }
 }

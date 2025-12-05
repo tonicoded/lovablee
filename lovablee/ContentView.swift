@@ -44,7 +44,9 @@ struct ContentView: View {
     @State private var partnerPhotoVersion = UUID().uuidString
     @State private var unopenedGift: PurchasedGift?
     @State private var showGiftReceivedModal = false
-
+    private let subscriptionManager = SubscriptionManager.shared
+    @State private var coupleIsPremium = false
+    @State private var couplePremiumUntil: Date?
     var body: some View {
         ZStack {
             switch stage {
@@ -167,6 +169,15 @@ struct ContentView: View {
                               supabaseURL: SupabaseAuthService.shared.publicProjectURL,
                               supabaseAnonKey: SupabaseAuthService.shared.publicAnonKey,
                               supabaseAccessToken: supabaseSession?.accessToken,
+                              onSyncPremium: { expires in
+                                  try await updatePremiumStatus(until: expires)
+                                  try? await refreshCouplePremium()
+                              },
+                              onRefreshCouplePremium: {
+                                  try? await refreshCouplePremium()
+                              },
+                              isCouplePremium: coupleIsPremium,
+                              couplePremiumUntil: couplePremiumUntil,
                               onSendGift: { giftType, message in
                                   _ = try await sendGift(giftType: giftType, message: message)
                               },
@@ -239,6 +250,7 @@ struct ContentView: View {
                 ensureLatestUserRecordIfMissing(force: true)
                 checkForUnopenedGifts()
                 startProfileAutoRefresh()
+                Task { try? await refreshCouplePremium() }
                 // Force widget sync when entering dashboard
                 Task {
                     await WidgetSyncService.shared.syncWidgetWithLatestDoodle()
@@ -569,6 +581,26 @@ struct ContentView: View {
         }
     }
 
+    private func updatePremiumStatus(until: Date?) async throws {
+        try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.setPremiumStatus(
+                session: session,
+                premiumUntil: until,
+                premiumSource: session.user.id
+            )
+        }
+    }
+
+    private func refreshCouplePremium() async throws {
+        let status = try await performWithFreshSession { session in
+            try await SupabaseAuthService.shared.getCouplePremiumStatus(session: session)
+        }
+        await MainActor.run {
+            coupleIsPremium = status.isPremium
+            couplePremiumUntil = status.premiumUntil
+        }
+    }
+
     private func addCustomAnniversary(name: String, date: Date) async throws -> Anniversary {
         return try await performWithFreshSession { session in
             try await SupabaseAuthService.shared.addCustomAnniversary(session: session, name: name, date: date)
@@ -637,6 +669,8 @@ struct ContentView: View {
         }
     }
 
+    
+
     private func refreshSupabaseSession() async throws -> SupabaseSession {
         guard let currentSession = supabaseSession,
               let refreshToken = currentSession.refreshToken else {
@@ -675,6 +709,7 @@ struct ContentView: View {
                     self.lastSyncedToken = token
                     self.isSyncingUserRecord = false
                 }
+                Task { try? await refreshCouplePremium() }
             } else {
                 await MainActor.run {
                     self.forceLogoutToWelcome(reason: "We couldn't find your profile. Please sign in again.")
@@ -859,6 +894,7 @@ struct ContentView: View {
         }
         self.partnerPhotoVersion = UUID().uuidString
         self.sessionStore.update(userRecord: record)
+        Task { try? await refreshCouplePremium() }
     }
 
     private func friendlyJoinPartnerMessage(for error: Error) -> String {
@@ -877,6 +913,10 @@ struct ContentView: View {
             }
         case .unauthorized:
             return "You're signed out. Please open lovablee again to reconnect."
+        case .emailInUse:
+            return "That email is already registered. Please sign in instead."
+        case .weakPassword:
+            return "Password must be at least 6 characters."
         case .unknown:
             return "We couldn't link you two right now. Please try again in a moment."
         }
@@ -912,6 +952,10 @@ struct ContentView: View {
                 return "Your session expired. Please restart the app."
             case .server:
                 return "Server error. Please try again in a moment."
+            case .emailInUse:
+                return "That email is already registered. Please sign in instead."
+            case .weakPassword:
+                return "Password must be at least 6 characters."
             case .unknown:
                 return fallback
             }
@@ -1923,6 +1967,23 @@ private struct AuthFlowView: View {
             print("❌ Supabase error description: \(description)")
             return description
         }
+
+        if let netError = error as? NetworkError {
+            switch netError {
+            case .httpError(let code, let data) where code == 422:
+                let body = String(data: data, encoding: .utf8)?.lowercased() ?? ""
+                if body.contains("already registered") || body.contains("user already exists") {
+                    return "That email is already registered. Please sign in instead."
+                }
+                if body.contains("password") {
+                    return "Password must be at least 6 characters."
+                }
+                return netError.friendlyMessage
+            default:
+                return netError.friendlyMessage
+            }
+        }
+
         print("❌ Unknown error: \(error.localizedDescription)")
         return error.localizedDescription
     }
@@ -2595,12 +2656,28 @@ private final class SupabaseAuthService {
             throw SupabaseAuthError.unknown
         }
 
+        // Debug 5xx responses with raw body and URL for easier diagnosis.
+        if httpResponse.statusCode >= 500 {
+            let raw = String(data: data, encoding: .utf8) ?? "<non-utf8 body>"
+            let urlString = httpResponse.url?.absoluteString ?? "<no url>"
+            print("🚨 Supabase 5xx (\(httpResponse.statusCode)) for \(urlString)")
+            print("🚨 Body (\(data.count) bytes): \(raw)")
+        }
+
         // Treat 401 and 400 as unauthorized (400 often returned for expired refresh tokens)
         if httpResponse.statusCode == 401 || httpResponse.statusCode == 400 {
             let message = String(data: data, encoding: .utf8) ?? "Your session expired. Please sign in again."
             // Check if it's an auth-related error
             if message.lowercased().contains("token") || message.lowercased().contains("session") || message.lowercased().contains("unauthorized") || httpResponse.statusCode == 401 {
                 throw SupabaseAuthError.unauthorized(message)
+            }
+        }
+
+        // Some Supabase gateways return 500 for expired/invalid JWTs. Detect and treat as unauthorized.
+        if httpResponse.statusCode == 500 {
+            let lower = (String(data: data, encoding: .utf8) ?? "").lowercased()
+            if lower.contains("jwt") || lower.contains("token") || lower.contains("session") {
+                throw SupabaseAuthError.unauthorized(lower.isEmpty ? "Session expired. Please sign in again." : lower)
             }
         }
 
@@ -2613,14 +2690,24 @@ private final class SupabaseAuthService {
             if let jsonData = message.data(using: .utf8),
                let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
                 print("   Parsed JSON: \(json)")
-                if let errorMsg = json["error_description"] as? String ?? json["message"] as? String ?? json["msg"] as? String ?? json["hint"] as? String {
-                    print("   Error message: \(errorMsg)")
-                    throw SupabaseAuthError.server(errorMsg)
-                }
-                // Check for details field (common in Supabase errors)
-                if let details = json["details"] as? String {
-                    print("   Details: \(details)")
-                    throw SupabaseAuthError.server(details)
+                let rawError = json["error_description"] as? String ?? json["message"] as? String ?? json["msg"] as? String ?? json["hint"] as? String
+                let details = json["details"] as? String
+                let picked = rawError ?? details
+                if let picked {
+                    print("   Error message: \(picked)")
+
+                    // Friendly mapping for common auth/signup issues (422).
+                    if httpResponse.statusCode == 422 {
+                        let lower = picked.lowercased()
+                        if lower.contains("already registered") || lower.contains("user already exists") {
+                            throw SupabaseAuthError.emailInUse
+                        }
+                        if lower.contains("password") {
+                            throw SupabaseAuthError.weakPassword
+                        }
+                    }
+
+                    throw SupabaseAuthError.server(picked)
                 }
             }
 
@@ -3105,6 +3192,60 @@ private final class SupabaseAuthService {
             .replacingOccurrences(of: "\"", with: "")
     }
 
+    func getCouplePremiumStatus(session: SupabaseSession) async throws -> (isPremium: Bool, premiumUntil: Date?) {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/get_couple_premium_status"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = Data("{}".utf8)
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return (false, nil) }
+
+        let isPremium: Bool = {
+            if let b = json["is_premium"] as? Bool { return b }
+            if let s = json["is_premium"] as? String { return ["true", "t", "1"].contains(s.lowercased()) }
+            return false
+        }()
+
+        let premiumUntil: Date? = {
+            guard let untilString = json["premium_until"] as? String else { return nil }
+            if let iso = ISO8601DateFormatter().date(from: untilString) { return iso }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ssXXXXX"
+            if let d = formatter.date(from: untilString) { return d }
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            return formatter.date(from: untilString)
+        }()
+        return (isPremium, premiumUntil)
+    }
+
+    func setPremiumStatus(session: SupabaseSession,
+                          premiumUntil: Date?,
+                          premiumSource: String?) async throws {
+        var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/set_premium_status"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+        let iso = ISO8601DateFormatter()
+        let payload: [String: Any?] = [
+            "p_premium_until": premiumUntil.map { iso.string(from: $0) } ?? NSNull(),
+            "p_premium_source": premiumSource
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+    }
+
     func sendGift(session: SupabaseSession, giftType: String, message: String) async throws -> PurchasedGift {
         var request = URLRequest(url: projectURL.appendingPathComponent("rest/v1/rpc/send_gift"))
         request.httpMethod = "POST"
@@ -3583,6 +3724,8 @@ private struct SupabaseSession: Codable {
 private enum SupabaseAuthError: LocalizedError {
     case server(String)
     case unauthorized(String)
+    case emailInUse
+    case weakPassword
     case unknown
 
     var errorDescription: String? {
@@ -3591,6 +3734,10 @@ private enum SupabaseAuthError: LocalizedError {
             return "Supabase error: \(message)"
         case .unauthorized(let message):
             return message
+        case .emailInUse:
+            return "That email is already registered. Please sign in instead."
+        case .weakPassword:
+            return "Password must be at least 6 characters."
         case .unknown:
             return "Something went wrong talking to Supabase."
         }

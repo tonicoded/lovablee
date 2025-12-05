@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>identifier</key>
+	<string>com.anthony.lovablee.storekit</string>
+	<key>version</key>
+	<integer>1</integer>
+	<key>subscriptionGroups</key>
+	<array>
+		<dict>
+			<key>id</key>
+			<string>group.lovablee.pro</string>
+			<key>displayName</key>
+			<string>Lovablee Pro</string>
+			<key>products</key>
+			<array>
+				<string>com.anthony.lovablee.pro.monthly2</string>
+				<string>com.anthony.lovablee.pro.yearly</string>
+			</array>
+		</dict>
+	</array>
+	<key>subscriptions</key>
+	<array>
+		<dict>
+			<key>id</key>
+			<string>com.anthony.lovablee.pro.monthly2</string>
+			<key>displayName</key>
+			<string>Lovablee Pro Monthly</string>
+			<key>description</key>
+			<string>Monthly access to Lovablee Pro features</string>
+			<key>productType</key>
+			<string>autoRenewableSubscription</string>
+			<key>subscriptionGroupID</key>
+			<string>group.lovablee.pro</string>
+			<key>subscriptionPeriod</key>
+			<dict>
+				<key>unit</key>
+				<string>month</string>
+				<key>numberOfUnits</key>
+				<integer>1</integer>
+			</dict>
+			<key>price</key>
+			<real>1.99</real>
+			<key>priceLocale</key>
+			<string>nl_NL</string>
+			<key>language</key>
+			<string>nl_NL</string>
+		</dict>
+		<dict>
+			<key>id</key>
+			<string>com.anthony.lovablee.pro.yearly</string>
+			<key>displayName</key>
+			<string>Lovablee Pro Yearly</string>
+			<key>description</key>
+			<string>Yearly access to Lovablee Pro features</string>
+			<key>productType</key>
+			<string>autoRenewableSubscription</string>
+			<key>subscriptionGroupID</key>
+			<string>group.lovablee.pro</string>
+			<key>subscriptionPeriod</key>
+			<dict>
+				<key>unit</key>
+				<string>year</string>
+				<key>numberOfUnits</key>
+				<integer>1</integer>
+			</dict>
+			<key>price</key>
+			<real>12.99</real>
+			<key>priceLocale</key>
+			<string>nl_NL</string>
+			<key>language</key>
+			<string>nl_NL</string>
+		</dict>
+	</array>
+</dict>
+</plist>
