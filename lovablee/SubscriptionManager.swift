@@ -3,9 +3,9 @@ import Combine
 import StoreKit
 
 enum LegalLinks {
-    static let privacy = URL(string: "https://lovablee.app/privacy")!
-    static let terms = URL(string: "https://lovablee.app/terms")!
-    static let support = URL(string: "https://lovablee.app/support")!
+    static let privacy = URL(string: "https://lovableeapp.vercel.app/privacy.html")!
+    static let terms = URL(string: "https://lovableeapp.vercel.app/terms.html")!
+    static let support = URL(string: "https://lovableeapp.vercel.app/support.html")!
 }
 
 @MainActor

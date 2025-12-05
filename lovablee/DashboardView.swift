@@ -108,6 +108,9 @@ struct DashboardView: View {
     @State private var togetherSinceDate: Date? = nil
     @StateObject private var subscriptionManager = SubscriptionManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage("hasSeenDashboardTutorial") private var hasSeenDashboardTutorial = false
+    @State private var showTutorial = false
+    @State private var tutorialStep: TutorialStep = .homeIntro
 
     private let listPreviewLimit = 6
 
@@ -133,6 +136,10 @@ struct DashboardView: View {
 
     private var canLoadMoreDoodles: Bool {
         !showAllDoodles && doodles.count >= listPreviewLimit
+    }
+
+    private var tutorialShouldShow: Bool {
+        !hasSeenDashboardTutorial && !showTutorial
     }
 
     private var canEditMoodToday: Bool {
@@ -394,10 +401,26 @@ struct DashboardView: View {
                     .transition(.opacity)
                     .zIndex(2)
                 }
+
+                if showTutorial {
+                    TutorialOverlay(
+                        theme: theme,
+                        isLightsOut: isLightsOut,
+                        step: tutorialStep,
+                        totalSteps: TutorialStep.allCases.count,
+                        onSkip: finishTutorial,
+                        onNext: advanceTutorial
+                    )
+                    .transition(.opacity)
+                    .zIndex(3)
+                }
             }
             .ignoresSafeArea(edges: [.top, .bottom])
             .ignoresSafeArea(.keyboard)
             .animation(.spring(response: 0.5, dampingFraction: 0.9), value: activeTab)
+            .onAppear {
+                startTutorialIfNeeded()
+            }
             .sheet(isPresented: $isLoveNoteSheetPresented) {
                 LoveNoteSheet(userName: name,
                               partnerName: partnerName,
@@ -2908,9 +2931,9 @@ private struct SettingsView: View {
 
     private var supportCard: some View {
         SectionCard(title: "Support", theme: theme, isLightsOut: isLightsOut) {
-            LinkRow(title: "Terms of Service", systemImage: "doc.text", url: URL(string: "https://lovablee.app/terms"), theme: theme, openURL: openURL)
-            LinkRow(title: "Privacy Policy", systemImage: "hand.raised.fill", url: URL(string: "https://lovablee.app/privacy"), theme: theme, openURL: openURL)
-            LinkRow(title: "Contact Support", systemImage: "envelope.fill", url: URL(string: "mailto:support@lovablee.app"), theme: theme, openURL: openURL)
+            LinkRow(title: "Terms of Service", systemImage: "doc.text", url: URL(string: "https://lovableeapp.vercel.app/terms.html"), theme: theme, openURL: openURL)
+            LinkRow(title: "Privacy Policy", systemImage: "hand.raised.fill", url: URL(string: "https://lovableeapp.vercel.app/privacy.html"), theme: theme, openURL: openURL)
+            LinkRow(title: "Contact Support", systemImage: "envelope.fill", url: URL(string: "https://lovableeapp.vercel.app/support.html"), theme: theme, openURL: openURL)
         }
         .onAppear {
             Task {
@@ -5037,6 +5060,158 @@ private struct TapBurst: Identifiable {
     var size: CGFloat
     var color: Color
     var opacity: Double
+}
+
+private enum TutorialStep: Int, CaseIterable {
+    case homeIntro
+    case shortcuts
+    case profile
+    case activity
+
+    var title: String {
+        switch self {
+        case .homeIntro: return "Welcome home"
+        case .shortcuts: return "Quick actions"
+        case .profile: return "Profile & space"
+        case .activity: return "Notifications"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .homeIntro:
+            return "Tap around the cozy room to water, play, feed, and explore gifts, lovebox, TV, and more."
+        case .shortcuts:
+            return "Use shortcuts for fast actions like water, play, feed, and gifts without leaving this tab."
+        case .profile:
+            return "See your space details, anniversaries, pairing info, and manage settings or photos."
+        case .activity:
+            return "Stay up to date on partner actions, rewards, and alerts. Pull to refresh anytime."
+        }
+    }
+
+    var tab: DashboardNavTab {
+        switch self {
+        case .homeIntro: return .home
+        case .shortcuts: return .shortcuts
+        case .profile: return .profile
+        case .activity: return .activity
+        }
+    }
+}
+
+private struct TutorialOverlay: View {
+    let theme: PaletteTheme
+    let isLightsOut: Bool
+    let step: TutorialStep
+    let totalSteps: Int
+    let onSkip: () -> Void
+    let onNext: () -> Void
+
+    private var accent: Color {
+        isLightsOut ? Color.white.opacity(0.9) : theme.buttonFill
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .ignoresSafeArea()
+
+            VStack(spacing: 16) {
+                Text("Quick tour")
+                    .font(.system(.callout, weight: .bold))
+                    .foregroundStyle(accent.opacity(0.9))
+
+                Text(step.title)
+                    .font(.system(.title2, weight: .black))
+                    .foregroundStyle(theme.textPrimary)
+                    .multilineTextAlignment(.center)
+
+                Text(step.message)
+                    .font(.system(.body, weight: .medium))
+                    .foregroundStyle(theme.textMuted)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+
+                HStack(spacing: 6) {
+                    ForEach(0..<totalSteps, id: \.self) { index in
+                        Circle()
+                            .fill(index == step.rawValue ? accent : accent.opacity(0.25))
+                            .frame(width: 8, height: 8)
+                    }
+                }
+                .padding(.top, 2)
+
+                HStack(spacing: 12) {
+                    Button(action: onSkip) {
+                        Text("Skip")
+                            .font(.system(.body, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(accent.opacity(0.3), lineWidth: 1)
+                            )
+                    }
+
+                    Button(action: onNext) {
+                        Text(step == TutorialStep.allCases.last ? "Done" : "Next")
+                            .font(.system(.body, weight: .semibold))
+                            .foregroundStyle(isLightsOut ? Color.black : Color.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(accent)
+                            )
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .padding(20)
+            .background(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .fill(isLightsOut ? Color(red: 0.12, green: 0.1, blue: 0.1) : Color.white)
+                    .shadow(color: .black.opacity(isLightsOut ? 0.5 : 0.15), radius: 20, y: 10)
+            )
+            .padding(.horizontal, 24)
+        }
+        .transition(.opacity)
+        .animation(.easeInOut, value: step)
+    }
+}
+
+// MARK: - Tutorial Helpers
+private extension DashboardView {
+    func startTutorialIfNeeded() {
+        guard !hasSeenDashboardTutorial else { return }
+        showTutorial = true
+        tutorialStep = .homeIntro
+        applyTutorialStep(tutorialStep)
+    }
+
+    func applyTutorialStep(_ step: TutorialStep) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            activeTab = step.tab
+        }
+    }
+
+    func advanceTutorial() {
+        if let next = TutorialStep(rawValue: tutorialStep.rawValue + 1) {
+            tutorialStep = next
+            applyTutorialStep(next)
+        } else {
+            finishTutorial()
+        }
+    }
+
+    func finishTutorial() {
+        hasSeenDashboardTutorial = true
+        withAnimation(.easeInOut(duration: 0.25)) {
+            showTutorial = false
+        }
+    }
 }
 
 private struct CozyAura: View {

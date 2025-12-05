@@ -344,7 +344,11 @@ struct ContentView: View {
                 try await performWithFreshSession { session in
                     try await SupabaseAuthService.shared.deleteUserAccount(session: session)
                 }
-                try await performWithFreshSession { session in
+                // Best-effort: delete auth user and sign out. Ignore 403/401 after deletion.
+                try? await performWithFreshSession { session in
+                    try await SupabaseAuthService.shared.deleteAuthUser(session: session)
+                }
+                try? await performWithFreshSession { session in
                     try await SupabaseAuthService.shared.signOut(session: session)
                 }
             } catch {
@@ -364,6 +368,8 @@ struct ContentView: View {
                 return
             }
             await MainActor.run {
+                self.dashboardAlert = DashboardAlert(title: "Account deleted",
+                                                     message: "Your space has been removed.")
                 self.supabaseSession = nil
                 self.userRecord = nil
                 self.appleIdentifier = nil
@@ -375,6 +381,7 @@ struct ContentView: View {
                 self.isPerformingAccountAction = false
                 self.sessionStore.clear()
                 self.partnerPhotoVersion = UUID().uuidString
+                UserDefaults.standard.set(false, forKey: "hasSeenDashboardTutorial")
             }
         }
     }
@@ -726,6 +733,7 @@ struct ContentView: View {
             } else {
                 await MainActor.run {
                     self.forceLogoutToWelcome(reason: "We couldn't find your profile. Please sign in again.")
+                    self.isSyncingUserRecord = false
                 }
             }
         } catch {
@@ -990,6 +998,7 @@ struct ContentView: View {
         self.isPerformingAccountAction = false
         self.sessionStore.clear()
         self.partnerPhotoVersion = UUID().uuidString
+        UserDefaults.standard.set(false, forKey: "hasSeenDashboardTutorial")
         WidgetDataStore.shared.clearSession()
     }
 
@@ -1006,6 +1015,7 @@ struct ContentView: View {
         stage = .auth
         sessionStore.clear()
         partnerPhotoVersion = UUID().uuidString
+        UserDefaults.standard.set(false, forKey: "hasSeenDashboardTutorial")
     }
 }
 
@@ -1659,13 +1669,13 @@ private struct AuthFlowView: View {
                             .foregroundStyle(theme.textMuted)
                         HStack(spacing: 4) {
                             Link("Terms of Service",
-                                 destination: URL(string: "https://lovablee.app/terms")!)
+                                 destination: URL(string: "https://lovableeapp.vercel.app/terms.html")!)
                                 .font(.system(.footnote, weight: .semibold))
                             Text("and")
                                 .font(.system(.footnote))
                                 .foregroundStyle(theme.textMuted)
                             Link("Privacy Policy",
-                                 destination: URL(string: "https://lovablee.app/privacy")!)
+                                 destination: URL(string: "https://lovableeapp.vercel.app/privacy.html")!)
                                 .font(.system(.footnote, weight: .semibold))
                         }
                     }
@@ -2893,6 +2903,17 @@ private final class SupabaseAuthService {
         components.queryItems = [URLQueryItem(name: "id", value: "eq.\(session.user.id)")]
         var request = URLRequest(url: components.url!)
         request.httpMethod = "DELETE"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await NetworkService.shared.performRequest(request)
+        _ = try validateResponse(data, response)
+    }
+
+    func deleteAuthUser(session: SupabaseSession) async throws {
+        var request = URLRequest(url: projectURL.appendingPathComponent("functions/v1/delete-user"))
+        request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
